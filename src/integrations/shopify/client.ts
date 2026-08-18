@@ -178,8 +178,11 @@ const PRECIO_MUTATION = /* GraphQL */ `
  * un delta, y con dos procesos sincronizando a la vez acabaría descuadrando.
  * Aquí Bsale es la fuente de verdad: se fija, no se ajusta.
  *
- * `ignoreCompareQuantity: true` porque no estamos resolviendo conflictos entre
- * escrituras simultáneas: la última sincronización manda.
+ * OJO con la versión de la API. En 2026-07 el input admite exactamente cuatro
+ * campos: `name`, `quantities`, `reason` y `referenceDocumentUri`. Un
+ * `ignoreCompareQuantity` que existía en versiones anteriores fue retirado, y
+ * mandarlo hace que Shopify rechace la mutación entera con
+ * «Field is not defined on InventorySetQuantitiesInput».
  */
 const INVENTARIO_MUTATION = /* GraphQL */ `
   mutation FijarInventario($input: InventorySetQuantitiesInput!) {
@@ -387,7 +390,10 @@ export class ShopifyClient {
       input: {
         name: 'available',
         reason: 'correction',
-        ignoreCompareQuantity: true,
+        // Identifica el origen del cambio en el historial de inventario de
+        // Shopify. Sin esto, el comerciante ve ajustes sin saber quién los
+        // hizo; con esto aparece el nombre de la integración.
+        referenceDocumentUri: `gid://mundolovepet-sync/BsaleSync/${Date.now()}`,
         quantities: cambios.map((c) => ({
           inventoryItemId: c.inventoryItemId,
           locationId: c.locationId,
