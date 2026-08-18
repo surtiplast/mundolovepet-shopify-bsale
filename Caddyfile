@@ -1,0 +1,16 @@
+# Reemplaza el dominio por el tuyo. Caddy gestiona el certificado TLS solo.
+sync.mundolovepet.pe {
+	encode gzip
+
+	# Cabeceras de seguridad. HSTS es obligatorio: Shopify no entrega webhooks
+	# a endpoints sin HTTPS válido.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		-Server
+	}
+
+	reverse_proxy app:3000
+}

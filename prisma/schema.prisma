@@ -1,0 +1,275 @@
+// Mundo Love Pet — Shopify × Bsale
+// Esquema completo. La Fase 1 sólo usa Connection, SyncLog y AdminUser;
+// el resto se deja definido para que las migraciones posteriores sean aditivas.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────── Enums ───────────────────────────
+
+enum Provider {
+  SHOPIFY
+  BSALE
+}
+
+enum ConnStatus {
+  UNKNOWN
+  CONNECTED
+  DISCONNECTED
+  ERROR
+}
+
+enum MapStatus {
+  PENDING
+  SYNCED
+  ERROR
+  MISSING_SKU
+  DUPLICATE_SKU
+  INACTIVE
+}
+
+enum DocIdType {
+  DNI
+  RUC
+  NONE
+}
+
+enum DocumentKind {
+  BOLETA
+  FACTURA
+}
+
+enum SyncStatus {
+  PENDING
+  PROCESSING
+  SYNCED
+  ERROR
+  NEEDS_ATTENTION
+  CANCELLED
+}
+
+enum LogLevel {
+  INFO
+  WARN
+  ERROR
+}
+
+enum SystemTag {
+  SHOPIFY
+  BSALE
+  APP
+}
+
+enum RunKind {
+  PRODUCTS
+  PRICES
+  STOCK
+  ORDERS
+  RETRY
+}
+
+enum RunTrigger {
+  MANUAL
+  SCHEDULED
+  WEBHOOK
+}
+
+enum RunStatus {
+  RUNNING
+  DONE
+  FAILED
+}
+
+enum Role {
+  ADMIN
+  VIEWER
+}
+
+// ──────────────────── Configuración y credenciales ────────────────────
+
+/// Credenciales cifradas con AES-256-GCM. El texto plano nunca se persiste.
+model Connection {
+  id             String     @id @default(cuid())
+  provider       Provider   @unique
+  encryptedToken Bytes
+  tokenIv        Bytes
+  tokenTag       Bytes
+  tokenLast4     String     @default("")
+  /// Metadatos NO sensibles: shopDomain, officeId, priceListId, apiVersion...
+  metadata       Json       @default("{}")
+  status         ConnStatus @default(UNKNOWN)
+  lastCheckedAt  DateTime?
+  lastError      String?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+}
+
+// ──────────────────── Catálogo: mapeo por SKU ────────────────────
+
+model ProductMap {
+  id                      String    @id @default(cuid())
+  /// Regla del proyecto: Bsale SKU == Shopify SKU
+  sku                     String    @unique
+  bsaleVariantId          Int?
+  bsaleProductId          Int?
+  shopifyVariantGid       String?
+  shopifyProductGid       String?
+  shopifyInventoryItemGid String?
+  name                    String?
+  brand                   String?
+  category                String?
+  bsalePrice              Decimal?  @db.Decimal(12, 4)
+  shopifyPrice            Decimal?  @db.Decimal(12, 4)
+  bsaleStock              Int?
+  shopifyStock            Int?
+  status                  MapStatus @default(PENDING)
+  lastError               String?
+  lastSyncedAt            DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+
+  @@index([status])
+  @@index([bsaleVariantId])
+  @@index([shopifyVariantGid])
+}
+
+// ──────────────────── Clientes ────────────────────
+
+model CustomerMap {
+  id                 String      @id @default(cuid())
+  docType            DocIdType
+  /// Normalizado: sólo dígitos, sin guiones ni espacios.
+  docNumber          String?
+  email              String?
+  bsaleClientId      Int?
+  shopifyCustomerGid String?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+  orders             OrderSync[]
+
+  @@unique([docType, docNumber])
+  @@index([email])
+}
+
+// ──────────── Pedidos y documentos: candados anti-duplicado ────────────
+
+model OrderSync {
+  id               String         @id @default(cuid())
+  /// Candado 1: un pedido de Shopify sólo puede existir una vez.
+  shopifyOrderId   BigInt         @unique
+  shopifyOrderName String
+  shopifyOrderGid  String
+  /// Candado 2: se envía a Bsale como `salesId` para que la propia API deduplique.
+  idempotencyKey   String         @unique
+  customerMapId    String?
+  customer         CustomerMap?   @relation(fields: [customerMapId], references: [id])
+  documentKind     DocumentKind?
+  totalAmount      Decimal        @db.Decimal(12, 2)
+  currency         String         @default("PEN")
+  status           SyncStatus     @default(PENDING)
+  attempts         Int            @default(0)
+  lastError        String?
+  lastErrorCode    String?
+  payload          Json
+  processedAt      DateTime?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  document         BsaleDocument?
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model BsaleDocument {
+  id              String       @id @default(cuid())
+  orderSyncId     String       @unique
+  orderSync       OrderSync    @relation(fields: [orderSyncId], references: [id])
+  /// Candado 3: un documento de Bsale no puede asociarse dos veces.
+  bsaleDocumentId Int          @unique
+  documentTypeId  Int
+  kind            DocumentKind
+  /// Serie y número, ej. "B001-00001234"
+  serialNumber    String
+  number          Int
+  emissionDate    DateTime
+  totalAmount     Decimal      @db.Decimal(12, 2)
+  bsaleToken      String
+  /// `informed` de Bsale: 0 correcto, 1 enviado, 2 rechazado.
+  sunatState      Int?
+  sunatMessage    String?
+  /// Ruta interna del PDF. NUNCA una URL pública de Bsale.
+  pdfStorageKey   String?
+  pdfFetchedAt    DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+}
+
+// ──────────────────── Trazabilidad ────────────────────
+
+model SyncLog {
+  id          String    @id @default(cuid())
+  occurredAt  DateTime  @default(now())
+  level       LogLevel  @default(INFO)
+  system      SystemTag
+  action      String
+  sku         String?
+  orderRef    String?
+  documentRef String?
+  result      String
+  message     String
+  errorCode   String?
+  /// Pasa siempre por redact() antes de guardarse.
+  context     Json?
+
+  @@index([occurredAt])
+  @@index([system, level])
+  @@index([sku])
+  @@index([orderRef])
+}
+
+model SyncRun {
+  id         String     @id @default(cuid())
+  kind       RunKind
+  trigger    RunTrigger
+  status     RunStatus  @default(RUNNING)
+  total      Int        @default(0)
+  processed  Int        @default(0)
+  succeeded  Int        @default(0)
+  failed     Int        @default(0)
+  startedAt  DateTime   @default(now())
+  finishedAt DateTime?
+  summary    Json?
+
+  @@index([kind, startedAt])
+}
+
+model WebhookEvent {
+  id          String    @id @default(cuid())
+  source      SystemTag
+  /// X-Shopify-Webhook-Id, o hash del payload para Bsale.
+  externalId  String
+  topic       String
+  receivedAt  DateTime  @default(now())
+  processedAt DateTime?
+  payload     Json
+
+  /// Deduplicación de reenvíos: Shopify reintenta si tardamos en responder 200.
+  @@unique([source, externalId])
+  @@index([receivedAt])
+}
+
+model AdminUser {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  /// argon2id
+  passwordHash String
+  role         Role      @default(ADMIN)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+}

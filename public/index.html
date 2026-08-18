@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Mundo Love Pet — Shopify × Bsale</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel-2:#1e222b; --line:#2a2f3a;
+    --txt:#e8eaf0; --muted:#9aa3b2; --brand:#6d5efc; --brand-2:#8b7dff;
+    --ok:#22c55e; --warn:#f59e0b; --err:#ef4444; --info:#38bdf8;
+  }
+  @media (prefers-color-scheme: light){
+    :root{ --bg:#f5f6fa; --panel:#fff; --panel-2:#f0f2f7; --line:#e2e6ef;
+           --txt:#12141a; --muted:#606a7b; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--txt);
+       font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  a{color:var(--brand-2)}
+  .wrap{max-width:1080px;margin:0 auto;padding:24px 20px 64px}
+
+  header.top{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+             padding:18px 0 24px;border-bottom:1px solid var(--line);margin-bottom:24px}
+  .logo{width:40px;height:40px;border-radius:11px;flex:0 0 auto;
+        background:linear-gradient(135deg,var(--brand),#22d3ee);
+        display:grid;place-items:center;font-size:20px}
+  h1{font-size:19px;margin:0;letter-spacing:-.01em}
+  .sub{color:var(--muted);font-size:13px;margin-top:2px}
+  .phase{margin-left:auto;font-size:12px;color:var(--muted);
+         border:1px solid var(--line);border-radius:999px;padding:5px 12px;background:var(--panel)}
+
+  .grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}
+  .card h2{font-size:15px;margin:0 0 4px;display:flex;align-items:center;gap:9px}
+  .card .desc{color:var(--muted);font-size:13px;margin:0 0 14px}
+
+  .dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto;background:var(--muted)}
+  .dot.ok{background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 22%,transparent)}
+  .dot.err{background:var(--err);box-shadow:0 0 0 3px color-mix(in srgb,var(--err) 22%,transparent)}
+  .dot.pend{background:var(--warn);box-shadow:0 0 0 3px color-mix(in srgb,var(--warn) 22%,transparent)}
+  .dot.busy{background:var(--info);animation:pulse 1s infinite}
+  @keyframes pulse{50%{opacity:.35}}
+
+  dl.kv{margin:0;display:grid;grid-template-columns:auto 1fr;gap:7px 14px;font-size:13px}
+  dl.kv dt{color:var(--muted)}
+  dl.kv dd{margin:0;text-align:right;font-variant-numeric:tabular-nums;word-break:break-all}
+  code.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
+            background:var(--panel-2);padding:2px 7px;border-radius:6px;border:1px solid var(--line)}
+
+  .actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:16px}
+  button{font:inherit;font-size:13px;font-weight:550;cursor:pointer;
+         border:1px solid var(--line);background:var(--panel-2);color:var(--txt);
+         padding:9px 15px;border-radius:9px;transition:.14s}
+  button:hover:not(:disabled){border-color:var(--brand);transform:translateY(-1px)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  button.primary{background:var(--brand);border-color:var(--brand);color:#fff}
+  button.primary:hover:not(:disabled){background:var(--brand-2)}
+
+  .banner{margin-bottom:20px;padding:13px 16px;border-radius:11px;font-size:13px;
+          border:1px solid var(--line);background:var(--panel);display:flex;gap:11px;align-items:flex-start}
+  .banner.ok{border-color:color-mix(in srgb,var(--ok) 45%,var(--line))}
+  .banner.err{border-color:color-mix(in srgb,var(--err) 45%,var(--line))}
+  .banner .x{margin-left:auto;cursor:pointer;color:var(--muted);background:none;border:none;padding:0 4px}
+
+  .out{margin-top:14px;background:var(--panel-2);border:1px solid var(--line);border-radius:10px;
+       padding:12px 14px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;
+       white-space:pre-wrap;word-break:break-word;max-height:300px;overflow:auto;display:none}
+  .out.show{display:block}
+
+  .note{margin-top:22px;font-size:12.5px;color:var(--muted);border-left:2px solid var(--line);padding-left:14px}
+  .note strong{color:var(--txt)}
+  footer{margin-top:34px;padding-top:18px;border-top:1px solid var(--line);
+         color:var(--muted);font-size:12px;display:flex;gap:14px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="logo">🐾</div>
+    <div>
+      <h1>Mundo Love Pet — Shopify × Bsale</h1>
+      <div class="sub">Panel de integración · Perú</div>
+    </div>
+    <span class="phase" id="phaseBadge">Fase 1 · Conexión</span>
+  </header>
+
+  <div id="banner"></div>
+
+  <div class="actions" style="margin:0 0 20px">
+    <button class="primary" id="btnAll">Probar ambas conexiones</button>
+    <button id="btnDiscover">Descubrir configuración de Bsale</button>
+    <button id="btnRefresh">Actualizar estado</button>
+  </div>
+
+  <section class="grid" id="cards"></section>
+
+  <pre class="out" id="output"></pre>
+
+  <div class="note">
+    <strong>Alcance de esta fase.</strong> El panel sólo lee y verifica credenciales.
+    Todavía no escribe precios ni stock en Shopify, y no emite ningún documento en Bsale.
+    Los tokens se guardan cifrados con AES-256-GCM y nunca se muestran completos —
+    sólo los últimos 4 caracteres.
+  </div>
+
+  <footer>
+    <span id="health">Comprobando servicio…</span>
+    <span>Admin GraphQL API de Shopify · Bsale API v1</span>
+  </footer>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const out = $('output');
+
+function banner(kind, text) {
+  $('banner').innerHTML =
+    `<div class="banner ${kind}"><span>${kind === 'ok' ? '🟢' : '🔴'}</span>` +
+    `<span>${escapeHtml(text)}</span>` +
+    `<button class="x" onclick="document.getElementById('banner').innerHTML=''">✕</button></div>`;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+}
+
+function dotClass(c) {
+  if (c.connected) return 'ok';
+  if (c.status === 'Error') return 'err';
+  return 'pend';
+}
+
+function renderCards(connections) {
+  $('cards').innerHTML = connections.map((c) => {
+    const meta = Object.entries(c.metadata || {})
+      .map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(String(v))}</dd>`)
+      .join('');
+    return `
+      <article class="card" data-provider="${c.provider}">
+        <h2><span class="dot ${dotClass(c)}"></span>${escapeHtml(c.label)}</h2>
+        <p class="desc">${c.connected ? 'Conectado' : escapeHtml(c.status)}</p>
+        <dl class="kv">
+          <dt>Token</dt><dd><code class="mono">${escapeHtml(c.maskedToken)}</code></dd>
+          ${meta}
+          <dt>Última verificación</dt>
+          <dd>${c.lastCheckedAt ? new Date(c.lastCheckedAt).toLocaleString('es-PE') : '—'}</dd>
+        </dl>
+        ${c.lastError
+          ? `<div class="out show" style="margin-top:12px">⚠️ ${escapeHtml(c.lastError)}</div>`
+          : ''}
+        <div class="actions">
+          <button onclick="testOne('${c.provider}')">Probar conexión</button>
+        </div>
+      </article>`;
+  }).join('');
+}
+
+async function refresh() {
+  try {
+    const res = await fetch('/api/connections');
+    const data = await res.json();
+    renderCards(data.connections);
+  } catch {
+    banner('err', 'No se pudo contactar al servidor.');
+  }
+}
+
+function setBusy(provider) {
+  const card = document.querySelector(`[data-provider="${provider}"] .dot`);
+  if (card) card.className = 'dot busy';
+}
+
+async function testOne(provider) {
+  setBusy(provider);
+  const path = provider === 'BSALE' ? 'bsale' : 'shopify';
+  try {
+    const res = await fetch(`/api/connections/${path}/test`, { method: 'POST' });
+    const data = await res.json();
+    show(data);
+    banner(data.ok ? 'ok' : 'err',
+      data.ok ? `${provider}: conexión correcta.` : `${provider}: ${data.error?.message ?? 'falló.'}`);
+  } catch {
+    banner('err', `${provider}: error de red.`);
+  }
+  refresh();
+}
+
+$('btnAll').onclick = async (e) => {
+  e.target.disabled = true;
+  ['BSALE', 'SHOPIFY'].forEach(setBusy);
+  try {
+    const res = await fetch('/api/connections/test-all', { method: 'POST' });
+    const data = await res.json();
+    show(data);
+    const fallos = (data.results || []).filter((r) => !r.ok).map((r) => r.provider);
+    banner(data.ok ? 'ok' : 'err',
+      data.ok ? 'Ambas conexiones responden correctamente. Fase 1 verificada.'
+              : `Falló: ${fallos.join(', ')}. Revisa el detalle abajo.`);
+  } catch {
+    banner('err', 'Error de red al probar las conexiones.');
+  }
+  e.target.disabled = false;
+  refresh();
+};
+
+$('btnDiscover').onclick = async (e) => {
+  e.target.disabled = true;
+  try {
+    const res = await fetch('/api/connections/bsale/discover');
+    const data = await res.json();
+    show(data);
+    banner(res.ok ? 'ok' : 'err',
+      res.ok ? 'Configuración de Bsale leída. Copia los IDs sugeridos a tu .env tras confirmarlos.'
+             : (data.error?.message ?? 'No se pudo leer la configuración.'));
+  } catch {
+    banner('err', 'Error de red al descubrir la configuración.');
+  }
+  e.target.disabled = false;
+};
+
+$('btnRefresh').onclick = refresh;
+
+function show(data) {
+  out.textContent = JSON.stringify(data, null, 2);
+  out.classList.add('show');
+}
+
+fetch('/api/health').then((r) => r.json()).then((h) => {
+  $('health').textContent =
+    `Servicio ${h.status} · almacén: ${h.almacen} · Shopify API ${h.versionApiShopify}`;
+}).catch(() => { $('health').textContent = 'Servicio no disponible'; });
+
+refresh();
+</script>
+</body>
+</html>

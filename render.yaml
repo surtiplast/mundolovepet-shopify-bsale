@@ -1,0 +1,261 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Mundo Love Pet — Shopify × Bsale
+# Blueprint de Render (infraestructura como código)
+#
+# Despliegue:  Dashboard de Render → New → Blueprint → seleccionar este repo
+# Validación:  render blueprints validate render.yaml   (Render CLI ≥ 2.7.0)
+#
+# ⚠️ NINGÚN secreto va en este archivo. Los tokens usan `sync: false`, así que
+#    Render te los pide en el navegador al crear el Blueprint.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# ESTADO: FASE 1 — solo la base de datos y el servicio web.
+#
+# Están comentados a propósito, y hay que reactivarlos más adelante:
+#
+#   · mlp-queue  (Key Value)  → reactivar en la FASE 3, junto con REDIS_URL
+#                               en el servicio web. Sin cola no hay trabajos
+#                               en segundo plano.
+#   · mlp-worker (worker)     → reactivar en la FASE 3, cuando dist/worker.js
+#                               deje de ser un marcador de posición.
+#   · mlp-poll-bsale (cron)   → reactivar en la FASE 3, o antes si Bsale aún no
+#                               ha activado los webhooks.
+#
+# Por qué: hoy esos tres servicios no hacen nada — el worker y el cron solo
+# escriben una línea en el log— y suman unos 21 USD al mes. Para reactivarlos,
+# quita el `# ` del principio de sus bloques.
+# ─────────────────────────────────────────────────────────────────────────────
+
+databases:
+  - name: mlp-db
+    databaseName: mlp_sync
+    user: mlp
+    # basic-256mb es suficiente para una tienda. Subir a basic-1gb si el
+    # historial de logs crece. NO usar `free`: expira a los 30 días y no
+    # tiene backups.
+    plan: basic-256mb
+    region: virginia
+    postgresMajorVersion: '18'
+    # Lista vacía = sólo conexiones por la red privada de Render.
+    # La base de datos no queda expuesta a internet.
+    ipAllowList: []
+
+services:
+#   # ── Cola de trabajos ───────────────────────────────────────────────────────
+#   - type: keyvalue
+#     name: mlp-queue
+#     plan: starter
+#     region: virginia
+#     # Sólo red privada. `ipAllowList` es obligatorio para Key Value.
+#     ipAllowList: []
+#     # noeviction: si la memoria se llena, preferimos un error de escritura a que
+#     # Render descarte silenciosamente un job de facturación pendiente.
+#     maxmemoryPolicy: noeviction
+#     # journal-snapshot: la cola sobrevive a reinicios. Con `off` se perderían
+#     # los pedidos encolados y sin facturar.
+#     persistenceMode: journal-snapshot
+
+  # ── API + panel + receptor de webhooks ─────────────────────────────────────
+  - type: web
+    name: mlp-sync
+    runtime: node
+    plan: starter # NO usar `free`: ver DESPLIEGUE-RENDER.md §2
+    region: virginia
+    # `--include=dev` es OBLIGATORIO. Con NODE_ENV=production (más abajo) npm
+    # omite las devDependencies, y el build las necesita: typescript y
+    # @types/node están ahí. Sin la bandera falla con:
+    #   error TS2688: Cannot find type definition file for 'node'.
+    buildCommand: npm ci --include=dev && npx prisma generate && npm run build
+    # Las migraciones corren antes de arrancar, no dentro del start command.
+    preDeployCommand: npx prisma migrate deploy
+    startCommand: node dist/server.js
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    # Margen para terminar de responder a un webhook de Shopify en curso
+    # antes de que Render mate el proceso durante un despliegue.
+    maxShutdownDelaySeconds: 60
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SHOPIFY_API_VERSION
+        value: '2026-07'
+      - key: BSALE_API_BASE_URL
+        value: https://api.bsale.io/v1
+      - key: ADMIN_EMAIL
+        value: surtiplast.pe@gmail.com
+
+      # APP_URL: se autorreferencia al hostname que Render asigna al servicio.
+      - key: APP_URL
+        fromService:
+          name: mlp-sync
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
+
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mlp-db
+          property: connectionString
+
+#       - key: REDIS_URL
+#         fromService:
+#           name: mlp-queue
+#           type: keyvalue
+#           property: connectionString
+
+      # generateValue produce un valor aleatorio de 256 bits en base64 —
+      # exactamente los 32 bytes que exige AES-256-GCM.
+      - key: ENCRYPTION_KEY
+        generateValue: true
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: BSALE_WEBHOOK_PATH_SECRET
+        generateValue: true
+
+      # sync: false → Render los pide en el navegador. Nunca en el repositorio.
+      - key: SHOPIFY_SHOP_DOMAIN
+        sync: false
+      - key: SHOPIFY_ADMIN_TOKEN
+        sync: false
+      - key: SHOPIFY_WEBHOOK_SECRET
+        sync: false
+      - key: BSALE_ACCESS_TOKEN
+        sync: false
+      - key: ADMIN_PASSWORD_HASH
+        sync: false
+
+      # IDs descubiertos en la Fase 1 con /api/connections/bsale/discover.
+      # Se completan en el dashboard después del primer despliegue.
+      - key: BSALE_OFFICE_ID
+        sync: false
+      - key: BSALE_PRICE_LIST_ID
+        sync: false
+      - key: BSALE_DOCTYPE_BOLETA_ID
+        sync: false
+      - key: BSALE_DOCTYPE_FACTURA_ID
+        sync: false
+      - key: BSALE_TAX_ID_IGV
+        sync: false
+
+      # Almacenamiento de comprobantes PDF (S3-compatible: R2 / B2 / S3).
+      # En Render NO se usa disco persistente para esto — ver
+      # DESPLIEGUE-RENDER.md §4. Necesario a partir de la Fase 7.
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+
+#   # ── Worker: sincronización y emisión de documentos ─────────────────────────
+#   # Servicio aparte para que una sincronización pesada del catálogo no bloquee
+#   # la respuesta a un webhook de Shopify (que debe contestar 200 en segundos).
+#   - type: worker
+#     name: mlp-worker
+#     runtime: node
+#     plan: starter
+#     region: virginia
+#     buildCommand: npm ci --include=dev && npx prisma generate && npm run build
+#     startCommand: node dist/worker.js # se crea en la Fase 3
+#     autoDeployTrigger: commit
+#     # Un job de emisión en curso NO debe cortarse a la mitad: sin esto, un
+#     # despliegue podría dejar un documento en estado indeterminado en Bsale.
+#     maxShutdownDelaySeconds: 120
+#     envVars:
+#       - key: NODE_ENV
+#         value: production
+#       - key: ROLE
+#         value: worker
+#       # El worker comparte configuración con el servicio web. Reutilizamos sus
+#       # variables en vez de duplicarlas, para que no se desincronicen.
+#       - key: DATABASE_URL
+#         fromDatabase:
+#           name: mlp-db
+#           property: connectionString
+#       - key: REDIS_URL
+#         fromService:
+#           name: mlp-queue
+#           type: keyvalue
+#           property: connectionString
+#       - key: ENCRYPTION_KEY
+#         fromService:
+#           name: mlp-sync
+#           type: web
+#           envVarKey: ENCRYPTION_KEY
+#       - key: SESSION_SECRET
+#         fromService:
+#           name: mlp-sync
+#           type: web
+#           envVarKey: SESSION_SECRET
+#       - key: ADMIN_EMAIL
+#         fromService:
+#           name: mlp-sync
+#           type: web
+#           envVarKey: ADMIN_EMAIL
+#       - key: SHOPIFY_SHOP_DOMAIN
+#         fromService:
+#           name: mlp-sync
+#           type: web
+#           envVarKey: SHOPIFY_SHOP_DOMAIN
+#       - key: SHOPIFY_ADMIN_TOKEN
+#         fromService:
+#           name: mlp-sync
+#           type: web
+#           envVarKey: SHOPIFY_ADMIN_TOKEN
+#       - key: SHOPIFY_API_VERSION
+#         fromService:
+#           name: mlp-sync
+#           type: web
+#           envVarKey: SHOPIFY_API_VERSION
+#       - key: BSALE_ACCESS_TOKEN
+#         fromService:
+#           name: mlp-sync
+#           type: web
+#           envVarKey: BSALE_ACCESS_TOKEN
+#       - key: BSALE_API_BASE_URL
+#         fromService:
+#           name: mlp-sync
+#           type: web
+#           envVarKey: BSALE_API_BASE_URL
+#
+#   # ── Respaldo por polling mientras Bsale activa los webhooks ────────────────
+#   # Bsale activa sus webhooks por solicitud manual a ayuda@bsale.app. Hasta
+#   # entonces, este cron mantiene sincronizados stock y precios.
+#   # Se puede desactivar cuando los webhooks estén operativos.
+#   - type: cron
+#     name: mlp-poll-bsale
+#     runtime: node
+#     plan: starter
+#     region: virginia
+#     schedule: '*/10 * * * *' # cada 10 minutos
+#     buildCommand: npm ci --include=dev && npx prisma generate && npm run build
+#     startCommand: node dist/jobs/poll-bsale.js # se crea en la Fase 3
+#     envVars:
+#       - key: NODE_ENV
+#         value: production
+#       - key: DATABASE_URL
+#         fromDatabase:
+#           name: mlp-db
+#           property: connectionString
+#       - key: REDIS_URL
+#         fromService:
+#           name: mlp-queue
+#           type: keyvalue
+#           property: connectionString
+#       - key: ENCRYPTION_KEY
+#         fromService:
+#           name: mlp-sync
+#           type: web
+#           envVarKey: ENCRYPTION_KEY
+#       - key: BSALE_ACCESS_TOKEN
+#         fromService:
+#           name: mlp-sync
+#           type: web
+#           envVarKey: BSALE_ACCESS_TOKEN
+#       - key: BSALE_API_BASE_URL
+#         fromService:
+#           name: mlp-sync
+#           type: web
+#           envVarKey: BSALE_API_BASE_URL
+#

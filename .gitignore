@@ -1,0 +1,26 @@
+node_modules
+dist
+.cache
+
+# Secretos. El .env lleva los tokens de Shopify y Bsale y la ENCRYPTION_KEY:
+# si se sube al repositorio, cualquiera con acceso puede emitir documentos
+# ante SUNAT en nombre de la empresa.
+.env
+.env.*
+!.env.example
+
+# Comprobantes descargados y datos locales.
+/storage
+/tmp
+
+*.log
+npm-debug.log*
+
+# Prisma deja este archivo al usar SQLite en pruebas locales.
+prisma/dev.db*
+
+.DS_Store
+Thumbs.db
+
+.idea
+.vscode
