@@ -183,8 +183,10 @@ describe('aplicarStock', () => {
 
     await aplicarStock(client as never, plan, 'gid://loc/99');
 
+    // `desde` es obligatorio: la API 2026-07 lo exige como changeFromQuantity
+    // para detectar que alguien vendió el producto mientras sincronizábamos.
     expect(client.fijarInventario).toHaveBeenCalledWith([
-      { inventoryItemId: 'gid://inv/7', locationId: 'gid://loc/99', cantidad: 3 },
+      { inventoryItemId: 'gid://inv/7', locationId: 'gid://loc/99', cantidad: 3, desde: 15 },
     ]);
   });
 

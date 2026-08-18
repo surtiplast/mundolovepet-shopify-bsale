@@ -172,11 +172,14 @@ export async function aplicarStock(
   for (let i = 0; i < plan.cambios.length; i += tamanoLote) {
     const lote = plan.cambios.slice(i, i + tamanoLote);
     const cambios: CambioInventario[] = lote
-      .filter((c) => c.shopifyInventoryItemId)
+      // Sin `valorAnterior` no se puede mandar `changeFromQuantity`, que la API
+      // exige. Se descarta ese cambio en vez de inventarse un cero.
+      .filter((c) => c.shopifyInventoryItemId && c.valorAnterior !== null)
       .map((c) => ({
         inventoryItemId: c.shopifyInventoryItemId!,
         locationId,
         cantidad: c.valorNuevo,
+        desde: c.valorAnterior!,
       }));
 
     try {

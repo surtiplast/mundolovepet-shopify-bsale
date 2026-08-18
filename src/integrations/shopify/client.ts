@@ -179,10 +179,18 @@ const PRECIO_MUTATION = /* GraphQL */ `
  * Aquí Bsale es la fuente de verdad: se fija, no se ajusta.
  *
  * OJO con la versión de la API. En 2026-07 el input admite exactamente cuatro
- * campos: `name`, `quantities`, `reason` y `referenceDocumentUri`. Un
- * `ignoreCompareQuantity` que existía en versiones anteriores fue retirado, y
- * mandarlo hace que Shopify rechace la mutación entera con
- * «Field is not defined on InventorySetQuantitiesInput».
+ * campos: `name`, `quantities`, `reason` y `referenceDocumentUri`. El
+ * `ignoreCompareQuantity` de versiones anteriores fue retirado, y mandarlo hace
+ * que Shopify rechace la mutación entera.
+ *
+ * En su lugar, cada cantidad EXIGE `changeFromQuantity`: la cantidad que la app
+ * cree que hay ahora mismo. Es control de concurrencia — si alguien vendió el
+ * producto entre que leímos el stock y lo escribimos, el valor ya no coincide y
+ * Shopify rechaza ese cambio concreto en vez de pisar el dato más reciente.
+ *
+ * Conviene entender por qué esto es bueno y no un estorbo: sin ese control, una
+ * sincronización lanzada mientras entran pedidos dejaría el inventario por
+ * encima del real y provocaría sobreventa.
  */
 const INVENTARIO_MUTATION = /* GraphQL */ `
   mutation FijarInventario($input: InventorySetQuantitiesInput!) {
@@ -209,6 +217,8 @@ export interface CambioInventario {
   inventoryItemId: string;
   locationId: string;
   cantidad: number;
+  /** La cantidad que Shopify tenía cuando la leímos. La exige la API. */
+  desde: number;
 }
 
 export interface ResultadoEscritura {
@@ -398,6 +408,7 @@ export class ShopifyClient {
           inventoryItemId: c.inventoryItemId,
           locationId: c.locationId,
           quantity: c.cantidad,
+          changeFromQuantity: c.desde,
         })),
       },
     });
