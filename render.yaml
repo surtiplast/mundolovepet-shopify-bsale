@@ -114,7 +114,14 @@ services:
       # sync: false → Render los pide en el navegador. Nunca en el repositorio.
       - key: SHOPIFY_SHOP_DOMAIN
         sync: false
-      - key: SHOPIFY_ADMIN_TOKEN
+      # Credenciales de la app del Dev Dashboard. Desde el 1 de enero de 2026
+      # Shopify no permite crear apps personalizadas desde el admin de la
+      # tienda, que eran las que daban un token estático `shpat_`. Ahora el
+      # token se pide con client credentials y caduca cada ~24 h: lo renueva
+      # src/integrations/shopify/token.ts.
+      - key: SHOPIFY_CLIENT_ID
+        sync: false
+      - key: SHOPIFY_CLIENT_SECRET
         sync: false
       - key: SHOPIFY_WEBHOOK_SECRET
         sync: false
@@ -198,11 +205,16 @@ services:
 #           name: mlp-sync
 #           type: web
 #           envVarKey: SHOPIFY_SHOP_DOMAIN
-#       - key: SHOPIFY_ADMIN_TOKEN
+#       - key: SHOPIFY_CLIENT_ID
 #         fromService:
 #           name: mlp-sync
 #           type: web
-#           envVarKey: SHOPIFY_ADMIN_TOKEN
+#           envVarKey: SHOPIFY_CLIENT_ID
+#       - key: SHOPIFY_CLIENT_SECRET
+#         fromService:
+#           name: mlp-sync
+#           type: web
+#           envVarKey: SHOPIFY_CLIENT_SECRET
 #       - key: SHOPIFY_API_VERSION
 #         fromService:
 #           name: mlp-sync

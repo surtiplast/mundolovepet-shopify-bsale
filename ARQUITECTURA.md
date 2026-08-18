@@ -124,7 +124,7 @@ NODE_ENV, PORT, APP_URL, DATABASE_URL, REDIS_URL,
 ENCRYPTION_KEY            # 32 bytes en base64, clave maestra AES-256-GCM
 SESSION_SECRET            # firma de cookies del panel
 ADMIN_EMAIL, ADMIN_PASSWORD_HASH   # acceso al panel (argon2id)
-SHOPIFY_SHOP_DOMAIN, SHOPIFY_ADMIN_TOKEN, SHOPIFY_API_VERSION, SHOPIFY_WEBHOOK_SECRET
+SHOPIFY_SHOP_DOMAIN, SHOPIFY_CLIENT_ID, SHOPIFY_CLIENT_SECRET, SHOPIFY_API_VERSION, SHOPIFY_WEBHOOK_SECRET
 BSALE_ACCESS_TOKEN, BSALE_API_BASE_URL, BSALE_OFFICE_ID, BSALE_PRICE_LIST_ID
 BSALE_DOCTYPE_BOLETA_ID, BSALE_DOCTYPE_FACTURA_ID, BSALE_TAX_ID_IGV
 BSALE_WEBHOOK_SHARED_SECRET
@@ -134,7 +134,21 @@ BSALE_WEBHOOK_SHARED_SECRET
 
 ## 3. Permisos necesarios
 
-### 3.1 Shopify — scopes de la Custom App
+### 3.1 Shopify — scopes de la app
+
+> **Actualización (17/08/2026).** Desde el 1 de enero de 2026 Shopify no permite
+> crear apps personalizadas desde el admin de la tienda. Las apps nuevas se
+> crean en el Dev Dashboard y **no entregan un token estático `shpat_`**: dan
+> Client ID y Client Secret, y el token se pide con el flujo de *client
+> credentials*, caducando cada ~24 h.
+>
+> La app lo renueva sola en `src/integrations/shopify/token.ts`. Las variables
+> de entorno son `SHOPIFY_CLIENT_ID` y `SHOPIFY_CLIENT_SECRET`; ya no existe
+> `SHOPIFY_ADMIN_TOKEN`.
+>
+> Los scopes de abajo no cambian: se configuran igual, solo que en el Dev
+> Dashboard.
+
 
 Se aplica el principio de privilegio mínimo. Se piden **sólo** estos:
 

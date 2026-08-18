@@ -17,9 +17,19 @@
 import { IntegrationError, backoffDelayMs } from '../../lib/errors.js';
 import { scrubMessage } from '../../lib/mask.js';
 
+/**
+ * El token puede ser una cadena fija o un proveedor que lo obtiene y renueva.
+ *
+ * Desde enero de 2026 las apps nuevas de Shopify no entregan un token estático:
+ * hay que pedirlo con client credentials y caduca cada ~24 h. Ver
+ * `token.ts`. Se admite la cadena para las apps antiguas que aún la tengan y
+ * para que las pruebas no necesiten simular el flujo completo.
+ */
+export type AccessTokenSource = string | (() => Promise<string>);
+
 export interface ShopifyClientOptions {
   shopDomain: string;
-  accessToken: string;
+  accessToken: AccessTokenSource;
   apiVersion?: string;
   timeoutMs?: number;
   maxRetries?: number;
@@ -94,7 +104,7 @@ const LOCATIONS_QUERY = /* GraphQL */ `
 
 export class ShopifyClient {
   private readonly shopDomain: string;
-  private readonly accessToken: string;
+  private readonly accessToken: AccessTokenSource;
   private readonly apiVersion: string;
   private readonly timeoutMs: number;
   private readonly maxRetries: number;
@@ -127,6 +137,18 @@ export class ShopifyClient {
 
   get endpoint(): string {
     return `https://${this.shopDomain}/admin/api/${this.apiVersion}/graphql.json`;
+  }
+
+  /**
+   * Resuelve el token justo antes de cada petición.
+   *
+   * Con un proveedor de client credentials esto importa: el token caduca cada
+   * ~24 h y el proveedor decide si devuelve el de la caché o pide uno nuevo. Si
+   * se resolviera una sola vez en el constructor, el cliente se quedaría con un
+   * token muerto y empezaría a recibir 401 al día siguiente.
+   */
+  private async resolverToken(): Promise<string> {
+    return typeof this.accessToken === 'function' ? this.accessToken() : this.accessToken;
   }
 
   /** Última lectura del bucket de coste. Útil para mostrarlo en el panel. */
@@ -187,6 +209,10 @@ export class ShopifyClient {
   }
 
   private async queryOnce<T>(query: string, variables: Record<string, unknown>): Promise<T> {
+    // Se resuelve una sola vez por petición: se usa para la cabecera y también
+    // para redactarlo si hay que construir un mensaje de error.
+    const token = await this.resolverToken();
+
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
 
@@ -195,7 +221,7 @@ export class ShopifyClient {
       response = await this.fetchImpl(this.endpoint, {
         method: 'POST',
         headers: {
-          'X-Shopify-Access-Token': this.accessToken,
+          'X-Shopify-Access-Token': token,
           'Content-Type': 'application/json',
           Accept: 'application/json',
         },
@@ -243,7 +269,7 @@ export class ShopifyClient {
       const code = payload.errors[0]?.extensions?.code;
       const message = payload.errors.map((e) => e.message).join(' | ');
       throw new IntegrationError(
-        scrubMessage(`Shopify devolvió errores de GraphQL: ${message}`, [this.accessToken]),
+        scrubMessage(`Shopify devolvió errores de GraphQL: ${message}`, [token]),
         {
           provider: 'SHOPIFY',
           status: response.status,

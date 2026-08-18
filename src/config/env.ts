@@ -30,7 +30,17 @@ const schema = z.object({
   SHOPIFY_SHOP_DOMAIN: z
     .string()
     .regex(/^[a-z0-9-]+\.myshopify\.com$/i, 'Debe tener el formato tienda.myshopify.com'),
-  SHOPIFY_ADMIN_TOKEN: z.string().min(1, 'SHOPIFY_ADMIN_TOKEN es obligatorio'),
+  /**
+   * Credenciales de la app del Dev Dashboard.
+   *
+   * Desde el 1 de enero de 2026 Shopify no permite crear apps personalizadas
+   * desde el admin de la tienda, que eran las que entregaban un token estático
+   * `shpat_…`. Las apps nuevas dan Client ID y Client Secret, y el token se
+   * pide con el flujo de client credentials — caduca cada ~24 h y lo renueva
+   * `integrations/shopify/token.ts`.
+   */
+  SHOPIFY_CLIENT_ID: z.string().min(1, 'SHOPIFY_CLIENT_ID es obligatorio'),
+  SHOPIFY_CLIENT_SECRET: z.string().min(1, 'SHOPIFY_CLIENT_SECRET es obligatorio'),
   SHOPIFY_API_VERSION: z
     .string()
     .regex(/^\d{4}-\d{2}$/, 'Formato de versión inválido (ej. 2026-07)')

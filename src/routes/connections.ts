@@ -39,7 +39,7 @@ export function connectionsRouter(service: ConnectionService, env: Env): Router 
   });
 
   router.post('/connections/shopify/test', testLimiter, async (_req: Request, res: Response) => {
-    const result = await service.testShopify(env.SHOPIFY_SHOP_DOMAIN, env.SHOPIFY_API_VERSION);
+    const result = await service.testShopify(env.SHOPIFY_SHOP_DOMAIN, env.SHOPIFY_API_VERSION, env.SHOPIFY_CLIENT_ID);
     res.status(result.ok ? 200 : 502).json(result);
   });
 
@@ -47,7 +47,7 @@ export function connectionsRouter(service: ConnectionService, env: Env): Router 
   router.post('/connections/test-all', testLimiter, async (_req: Request, res: Response) => {
     const [bsale, shopify] = await Promise.all([
       service.testBsale(env.BSALE_API_BASE_URL),
-      service.testShopify(env.SHOPIFY_SHOP_DOMAIN, env.SHOPIFY_API_VERSION),
+      service.testShopify(env.SHOPIFY_SHOP_DOMAIN, env.SHOPIFY_API_VERSION, env.SHOPIFY_CLIENT_ID),
     ]);
     const allOk = bsale.ok && shopify.ok;
     res.status(allOk ? 200 : 502).json({ ok: allOk, results: [bsale, shopify] });

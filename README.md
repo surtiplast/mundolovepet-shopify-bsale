@@ -23,7 +23,8 @@ oficiales, esquema de base de datos, flujos completos, riesgos y plan por fases.
 | Panel web con estado de conexiones | ✅ |
 | Esquema completo de base de datos (Prisma) | ✅ |
 | Docker Compose + Caddy con HTTPS | ✅ |
-| **91 pruebas automáticas, typecheck limpio** | ✅ |
+| Token de Shopify por client credentials, con renovación automática | ✅ |
+| **108 pruebas automáticas, typecheck limpio** | ✅ |
 
 **Lo que esta fase NO hace todavía**, a propósito: no escribe precios ni stock en
 Shopify, no crea clientes, no emite boletas ni facturas, y no registra webhooks.
@@ -34,17 +35,34 @@ funciona con tus credenciales reales.
 
 ## Puesta en marcha
 
-### 1. Obtener el token de Shopify (Custom App)
+### 1. Crear la app de Shopify y obtener sus credenciales
 
-1. Admin de Shopify → **Configuración** → **Apps y canales de venta** → **Desarrollar apps**
-2. **Crear una app** → nombre: `Bsale Sync`
-3. **Configurar los scopes de Admin API** y marcar exactamente estos:
+> ⚠️ **Esto cambió el 1 de enero de 2026.** Shopify ya no permite crear apps
+> personalizadas desde el admin de la tienda (*Configuración → Apps y canales de
+> venta → Desarrollar apps*). Eran las que entregaban un token estático
+> `shpat_…` que se copiaba y pegaba. Las apps creadas antes de esa fecha siguen
+> funcionando, pero **no se pueden crear nuevas**.
+>
+> Si sigues una guía que te dice que copies un token del admin, está desfasada.
+
+Las apps nuevas se crean en el **Dev Dashboard** y no dan ningún token que
+copiar: dan un **Client ID** y un **Client Secret**, y la app pide el token ella
+misma cada ~24 horas. Eso lo hace `src/integrations/shopify/token.ts`; tú solo
+necesitas las dos credenciales.
+
+1. Entra a <https://dev.shopify.com/dashboard> → **Create app** → nombre: `Bsale Sync`
+2. **Configuration** → marca exactamente estos ámbitos de Admin API:
    `read_products`, `write_products`, `read_inventory`, `write_inventory`,
    `read_orders`, `read_customers`, `read_locations`
-4. **Instalar la app** → copiar el **Admin API access token** (empieza con `shpat_`)
+3. **Instala la app en tu tienda** desde el enlace que te da el dashboard
+4. **Settings → Credentials** → copia el **Client ID** y el **Client Secret**
 
-> ⚠️ Ese token se muestra **una sola vez**. Guárdalo en tu gestor de contraseñas
-> antes de cerrar la ventana.
+El Client ID no es secreto y puede ir a la vista. El **Client Secret sí**:
+trátalo como una contraseña. La app lo guarda cifrado con AES-256-GCM y nunca lo
+devuelve por la API del panel.
+
+> El flujo de client credentials sólo funciona con apps de tu propia
+> organización instaladas en tiendas que tú posees. Es exactamente este caso.
 
 ### 2. Obtener el token de Bsale
 
@@ -63,7 +81,7 @@ npm run keygen          # genera ENCRYPTION_KEY → cópiala al .env
 ```
 
 Completa en `.env`: `ENCRYPTION_KEY`, `SESSION_SECRET`, `SHOPIFY_SHOP_DOMAIN`,
-`SHOPIFY_ADMIN_TOKEN`, `BSALE_ACCESS_TOKEN`.
+`SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`, `BSALE_ACCESS_TOKEN`.
 
 Los IDs de Bsale (`BSALE_OFFICE_ID`, `BSALE_DOCTYPE_BOLETA_ID`, etc.) se dejan
 vacíos: los descubre la propia app en el paso 5.
@@ -115,7 +133,7 @@ En el panel:
 
 ```bash
 npm run typecheck   # sin errores
-npm test            # 91 pruebas
+npm test            # 108 pruebas
 ```
 
 Cobertura de las pruebas:
@@ -126,6 +144,7 @@ Cobertura de las pruebas:
 | `mask.test.ts` | Redacción de claves sensibles anidadas · `maskToken` nunca devuelve el token completo |
 | `bsale.client.test.ts` | Header `access_token` correcto · token nunca en la URL · 401 no reintentable, 429/5xx sí · límite de paginación 50 |
 | `shopify.client.test.ts` | Endpoint GraphQL con versión `2026-07` · errores de GraphQL con HTTP 200 detectados · `THROTTLED` reintentable · lectura del bucket de coste |
+| `shopify.token.test.ts` | El secreto viaja en el cuerpo y nunca en la URL · el token se cachea · se renueva **antes** de caducar · N llamadas simultáneas provocan una sola renovación · ni el secreto ni el client_id aparecen en los mensajes de error |
 | `connection.service.test.ts` | Los tokens se guardan cifrados · las vistas del panel nunca contienen tokens · el descubrimiento prefiere el tipo **electrónico** y descarta notas de venta |
 | `env.test.ts` | La app no arranca con configuración inválida · política de reintentos correcta |
 
@@ -176,7 +195,7 @@ quemar la cuota de las APIs externas desde el panel.
 │   ├── services/            ← ConnectionService
 │   ├── routes/              ← API del panel
 │   └── server.ts
-├── tests/                   ← 91 pruebas
+├── tests/                   ← 108 pruebas
 ├── docker-compose.yml · Dockerfile · Caddyfile
 ```
 

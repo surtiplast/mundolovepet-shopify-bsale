@@ -54,9 +54,13 @@ export async function createApp(env: Env, store: ConnectionStore, storeKind: str
   await service.saveCredential('BSALE', env.BSALE_ACCESS_TOKEN, {
     baseUrl: env.BSALE_API_BASE_URL,
   });
-  await service.saveCredential('SHOPIFY', env.SHOPIFY_ADMIN_TOKEN, {
+  // Para Shopify se guarda el CLIENT SECRET. Desde enero de 2026 no hay token
+  // estático que guardar: el token se pide con client credentials y caduca en
+  // ~24 h, así que lo duradero —y lo que hay que proteger— es el secreto.
+  await service.saveCredential('SHOPIFY', env.SHOPIFY_CLIENT_SECRET, {
     shopDomain: env.SHOPIFY_SHOP_DOMAIN,
     apiVersion: env.SHOPIFY_API_VERSION,
+    clientId: env.SHOPIFY_CLIENT_ID,
   });
 
   const app = express();

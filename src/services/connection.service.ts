@@ -19,6 +19,7 @@ import {
 } from '../db/connection.store.js';
 import { BsaleClient, type BsaleDocumentType, type BsaleOffice } from '../integrations/bsale/client.js';
 import { ShopifyClient } from '../integrations/shopify/client.js';
+import { ShopifyTokenProvider } from '../integrations/shopify/token.js';
 
 export interface ConnectionView {
   provider: ProviderName;
@@ -58,7 +59,17 @@ export interface ConnectionServiceDeps {
   encryptionKey: Buffer;
   /** Inyectables para testear sin red. */
   makeBsaleClient?: (token: string, baseUrl: string) => BsaleClient;
-  makeShopifyClient?: (token: string, shopDomain: string, apiVersion: string) => ShopifyClient;
+  /**
+   * `token` es ahora el CLIENT SECRET de la app, no un token de Admin API.
+   * El client_id llega en `clientId` porque no es secreto y hace falta para
+   * pedir el token.
+   */
+  makeShopifyClient?: (
+    token: string,
+    shopDomain: string,
+    apiVersion: string,
+    clientId: string,
+  ) => ShopifyClient;
   now?: () => Date;
 }
 
@@ -66,7 +77,12 @@ export class ConnectionService {
   private readonly store: ConnectionStore;
   private readonly key: Buffer;
   private readonly makeBsale: (token: string, baseUrl: string) => BsaleClient;
-  private readonly makeShopify: (token: string, shop: string, version: string) => ShopifyClient;
+  private readonly makeShopify: (
+    token: string,
+    shop: string,
+    version: string,
+    clientId: string,
+  ) => ShopifyClient;
   private readonly now: () => Date;
 
   constructor(deps: ConnectionServiceDeps) {
@@ -76,8 +92,17 @@ export class ConnectionService {
       deps.makeBsaleClient ?? ((accessToken, baseUrl) => new BsaleClient({ accessToken, baseUrl }));
     this.makeShopify =
       deps.makeShopifyClient ??
-      ((accessToken, shopDomain, apiVersion) =>
-        new ShopifyClient({ accessToken, shopDomain, apiVersion }));
+      ((clientSecret, shopDomain, apiVersion, clientId) => {
+        // El proveedor pide el token con client credentials y lo renueva antes
+        // de que caduque. Se pasa como función: el cliente lo resuelve en cada
+        // petición, así que nunca trabaja con un token vencido.
+        const proveedor = new ShopifyTokenProvider({ shopDomain, clientId, clientSecret });
+        return new ShopifyClient({
+          accessToken: () => proveedor.getToken(),
+          shopDomain,
+          apiVersion,
+        });
+      });
     this.now = deps.now ?? (() => new Date());
   }
 
@@ -184,12 +209,16 @@ export class ConnectionService {
     }
   }
 
-  async testShopify(shopDomain: string, apiVersion: string): Promise<TestResult> {
+  /**
+   * `clientId` no es secreto y por eso viaja como argumento; el client secret
+   * sale cifrado de la base y nunca abandona esta clase.
+   */
+  async testShopify(shopDomain: string, apiVersion: string, clientId: string): Promise<TestResult> {
     const checkedAt = this.now();
     let token = '';
     try {
       token = await this.revealToken('SHOPIFY');
-      const client = this.makeShopify(token, shopDomain, apiVersion);
+      const client = this.makeShopify(token, shopDomain, apiVersion, clientId);
       const result = await client.testConnection();
 
       const details = {

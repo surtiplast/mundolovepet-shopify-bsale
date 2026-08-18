@@ -9,7 +9,8 @@ const base = {
   SESSION_SECRET: 'x'.repeat(40),
   ADMIN_EMAIL: 'surtiplast.pe@gmail.com',
   SHOPIFY_SHOP_DOMAIN: 'mundolovepet.myshopify.com',
-  SHOPIFY_ADMIN_TOKEN: 'shpat_abc123',
+  SHOPIFY_CLIENT_ID: 'abc123clientid',
+  SHOPIFY_CLIENT_SECRET: 'shpss_secretodeprueba',
   BSALE_ACCESS_TOKEN: 'bsale-token',
 };
 
