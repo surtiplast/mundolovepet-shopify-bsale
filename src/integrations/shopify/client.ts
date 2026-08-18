@@ -14,6 +14,7 @@
  *    GraphQL. Ignorar eso es el error clásico de integración: hay que inspeccionar
  *    el cuerpo, no sólo el código de estado.
  */
+import { randomUUID } from 'node:crypto';
 import { IntegrationError, backoffDelayMs } from '../../lib/errors.js';
 import { scrubMessage } from '../../lib/mask.js';
 
@@ -191,10 +192,21 @@ const PRECIO_MUTATION = /* GraphQL */ `
  * Conviene entender por qué esto es bueno y no un estorbo: sin ese control, una
  * sincronización lanzada mientras entran pedidos dejaría el inventario por
  * encima del real y provocaría sobreventa.
+ *
+ * ── La directiva @idempotent ─────────────────────────────────────────────────
+ *
+ * Desde 2026-04 es OBLIGATORIA en las mutaciones de inventario, aunque el
+ * esquema no la marque como tal: sin ella la llamada falla en ejecución con
+ * «The @idempotent directive is required for this mutation».
+ *
+ * Su función es impedir que un reintento aplique el mismo ajuste dos veces.
+ * Por eso la clave se genera UNA VEZ por llamada y se reutiliza en los
+ * reintentos internos del cliente: generar una nueva en cada intento anularía
+ * la protección, que es exactamente el problema que la directiva evita.
  */
 const INVENTARIO_MUTATION = /* GraphQL */ `
-  mutation FijarInventario($input: InventorySetQuantitiesInput!) {
-    inventorySetQuantities(input: $input) {
+  mutation FijarInventario($input: InventorySetQuantitiesInput!, $idempotencyKey: String!) {
+    inventorySetQuantities(input: $input) @idempotent(key: $idempotencyKey) {
       inventoryAdjustmentGroup {
         createdAt
         reason
@@ -397,6 +409,10 @@ export class ShopifyClient {
         userErrors: Array<{ field: string[] | null; message: string }>;
       };
     }>(INVENTARIO_MUTATION, {
+      // Una clave por llamada. El bucle de reintentos de `query` reutiliza
+      // estas mismas variables, así que un reintento lleva la misma clave y
+      // Shopify no vuelve a aplicar el ajuste.
+      idempotencyKey: randomUUID(),
       input: {
         name: 'available',
         reason: 'correction',
