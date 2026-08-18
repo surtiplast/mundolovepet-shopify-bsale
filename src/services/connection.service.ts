@@ -148,6 +148,17 @@ export class ConnectionService {
     return fn(this.makeBsale(token, baseUrl));
   }
 
+  /** Igual que `usarBsale`, pero con el cliente de Shopify. */
+  async usarShopify<T>(
+    shopDomain: string,
+    apiVersion: string,
+    clientId: string,
+    fn: (client: ShopifyClient) => Promise<T>,
+  ): Promise<T> {
+    const secret = await this.revealToken('SHOPIFY');
+    return fn(this.makeShopify(secret, shopDomain, apiVersion, clientId));
+  }
+
   /** Descifra el token. Método privado a propósito: nunca sale de esta clase. */
   private async revealToken(provider: ProviderName): Promise<string> {
     const record = await this.store.get(provider);

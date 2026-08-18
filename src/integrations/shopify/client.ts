@@ -70,6 +70,26 @@ export interface ShopifyLocation {
   address: { city: string | null; country: string | null } | null;
 }
 
+/**
+ * Variante de Shopify, con los campos que necesita la sincronización.
+ *
+ * `sku` y `barcode` son campos DISTINTOS y ambos importan: en catálogos que
+ * vienen de un ERP peruano es frecuente que el código EAN esté en `barcode` y
+ * el `sku` esté vacío, o al revés. Emparejar por el campo equivocado no da
+ * error: simplemente no encuentra nada.
+ */
+export interface ShopifyVariant {
+  id: string;
+  sku: string | null;
+  barcode: string | null;
+  price: string | null;
+  inventoryQuantity: number | null;
+  inventoryItemId: string | null;
+  productId: string | null;
+  productTitle: string | null;
+  title: string | null;
+}
+
 export const DEFAULT_API_VERSION = '2026-07';
 
 const SHOP_QUERY = /* GraphQL */ `
@@ -96,6 +116,32 @@ const LOCATIONS_QUERY = /* GraphQL */ `
         address {
           city
           country
+        }
+      }
+    }
+  }
+`;
+
+const VARIANTS_QUERY = /* GraphQL */ `
+  query Variantes($first: Int!, $after: String) {
+    productVariants(first: $first, after: $after) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      nodes {
+        id
+        sku
+        barcode
+        price
+        inventoryQuantity
+        inventoryItem {
+          id
+        }
+        title
+        product {
+          id
+          title
         }
       }
     }
@@ -173,6 +219,61 @@ export class ShopifyClient {
       first,
     });
     return data.locations.nodes;
+  }
+
+  /**
+   * Recorre todas las variantes de la tienda.
+   *
+   * GraphQL pagina por cursor, no por offset: se pide `first` y se sigue con el
+   * `endCursor` de la página anterior mientras `hasNextPage` sea cierto. Usar
+   * offset aquí no es una opción — la API no lo ofrece.
+   *
+   * `first` es 100 porque es el máximo que admite Shopify por página. Si el
+   * coste de la consulta hiciera saltar el throttling, el propio cliente espera
+   * lo que el bucket indica y reintenta.
+   */
+  async *listarVariantes(maxItems = 100_000): AsyncGenerator<ShopifyVariant, void, undefined> {
+    let after: string | null = null;
+    let vistos = 0;
+
+    for (;;) {
+      const data: {
+        productVariants: {
+          pageInfo: { hasNextPage: boolean; endCursor: string | null };
+          nodes: Array<{
+            id: string;
+            sku: string | null;
+            barcode: string | null;
+            price: string | null;
+            inventoryQuantity: number | null;
+            inventoryItem: { id: string } | null;
+            title: string | null;
+            product: { id: string; title: string } | null;
+          }>;
+        };
+      } = await this.query(VARIANTS_QUERY, { first: 100, after });
+
+      for (const n of data.productVariants.nodes) {
+        yield {
+          id: n.id,
+          sku: n.sku,
+          barcode: n.barcode,
+          price: n.price,
+          inventoryQuantity: n.inventoryQuantity,
+          inventoryItemId: n.inventoryItem?.id ?? null,
+          productId: n.product?.id ?? null,
+          productTitle: n.product?.title ?? null,
+          title: n.title,
+        };
+        vistos++;
+        if (vistos >= maxItems) return;
+      }
+
+      if (!data.productVariants.pageInfo.hasNextPage) return;
+      after = data.productVariants.pageInfo.endCursor;
+      // Sin cursor no se puede continuar; salir es mejor que repetir la página.
+      if (!after) return;
+    }
   }
 
   // ── Transporte ─────────────────────────────────────────────────────────────

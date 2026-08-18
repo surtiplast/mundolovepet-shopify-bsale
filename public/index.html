@@ -112,7 +112,7 @@
       <h1>Mundo Love Pet — Shopify × Bsale</h1>
       <div class="sub">Panel de integración · Perú</div>
     </div>
-    <span class="phase" id="phaseBadge">Fase 2 · Catálogo</span>
+    <span class="phase" id="phaseBadge">Fase 3 · Emparejamiento</span>
   </header>
 
   <div id="banner"></div>
@@ -122,9 +122,24 @@
     <button id="btnDiscover">Descubrir configuración de Bsale</button>
     <button id="btnRefresh">Actualizar estado</button>
     <button id="btnCatalog">Leer catálogo de Bsale</button>
+    <button id="btnMatch">Comparar con Shopify</button>
   </div>
 
   <section class="grid" id="cards"></section>
+
+  <section id="match" hidden>
+    <h2 class="cat-titulo">Emparejamiento con Shopify</h2>
+    <div id="matchResumen" class="cat-resumen"></div>
+    <div id="matchAvisos"></div>
+    <div class="cat-tabla-scroll" id="matchTablaCaja" hidden>
+      <table class="cat-tabla">
+        <thead>
+          <tr><th>Código</th><th>Producto en Shopify</th><th class="num">Precio Bsale</th><th class="num">Precio Shopify</th><th class="num">Stock Bsale</th><th class="num">Stock Shopify</th></tr>
+        </thead>
+        <tbody id="matchCuerpo"></tbody>
+      </table>
+    </div>
+  </section>
 
   <section id="catalogo" hidden>
     <h2 class="cat-titulo">Catálogo de Bsale</h2>
@@ -401,6 +416,68 @@ fetch('/api/catalog').then((r) => r.json()).then((d) => {
     '<span class="cat-chip">Pulsa «Leer catálogo» para actualizar y diagnosticar</span>';
   pintarTabla();
 }).catch(() => {});
+
+/* ── Emparejamiento con Shopify (Fase 3, paso 1) ───────────────────────────
+   Sólo lectura. Responde a la pregunta de la que depende la sincronización:
+   ¿los códigos de Bsale están en el `sku` de Shopify o en el `barcode`? */
+function pintarMatch(inf) {
+  const nombreCampo = inf.campoRecomendado === 'barcode' ? 'código de barras' : 'SKU';
+  const hay = inf.emparejados.length > 0 || inf.conDiferencias > 0;
+
+  $('matchResumen').innerHTML = [
+    `<span class="cat-chip">Empareja por <b>${nombreCampo}</b></span>`,
+    `<span class="cat-chip">Por SKU <b>${inf.coincidenciasPorSku}</b></span>`,
+    `<span class="cat-chip">Por código de barras <b>${inf.coincidenciasPorBarcode}</b></span>`,
+    `<span class="cat-chip">En Bsale <b>${inf.totalBsale}</b></span>`,
+    `<span class="cat-chip">En Shopify <b>${inf.totalShopify}</b></span>`,
+    `<span class="cat-chip${inf.conDiferencias > 0 ? ' alerta' : ''}">Con diferencias <b>${inf.conDiferencias}</b></span>`,
+    `<span class="cat-chip${inf.soloEnBsale.length > 0 ? ' alerta' : ''}">Sólo en Bsale <b>${inf.soloEnBsale.length}</b></span>`,
+  ].join('');
+
+  $('matchAvisos').innerHTML = (inf.advertencias || [])
+    .map((a) => `<div class="banner err" style="margin:10px 0"><span>${escapeHtml(a)}</span></div>`)
+    .join('');
+
+  const filas = inf.emparejados || [];
+  $('matchTablaCaja').hidden = filas.length === 0;
+  $('matchCuerpo').innerHTML = filas.map((e) => `<tr>
+      <td class="sku">${escapeHtml(e.codigo)}</td>
+      <td>${escapeHtml(e.nombreShopify || '')}</td>
+      <td class="num">${soles(e.precioBsale)}</td>
+      <td class="num"${e.difierePrecio ? ' style="color:var(--err)"' : ''}>${soles(e.precioShopify)}</td>
+      <td class="num">${e.stockBsale == null ? '—' : e.stockBsale}</td>
+      <td class="num"${e.difiereStock ? ' style="color:var(--err)"' : ''}>${e.stockShopify == null ? '—' : e.stockShopify}</td>
+    </tr>`).join('');
+}
+
+$('btnMatch').onclick = async (e) => {
+  e.target.disabled = true;
+  const textoOriginal = e.target.textContent;
+  e.target.textContent = 'Comparando…';
+  try {
+    const res = await fetch('/api/catalog/match', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      banner('err', data.error?.message || 'No se pudo comparar.');
+      show(data);
+    } else {
+      const inf = data.informe;
+      $('match').hidden = false;
+      pintarMatch(inf);
+      const total = inf.coincidenciasPorSku + inf.coincidenciasPorBarcode;
+      banner(
+        total === 0 ? 'err' : 'ok',
+        total === 0
+          ? 'Ningún producto empareja. Revisa los avisos antes de sincronizar.'
+          : `Emparejan ${Math.max(inf.coincidenciasPorSku, inf.coincidenciasPorBarcode)} productos por ${inf.campoRecomendado === 'barcode' ? 'código de barras' : 'SKU'}. ${inf.conDiferencias} tienen precio o stock distinto.`,
+      );
+    }
+  } catch (err) {
+    banner('err', 'Error de red al comparar los catálogos.');
+  }
+  e.target.disabled = false;
+  e.target.textContent = textoOriginal;
+};
 
 refresh();
 </script>

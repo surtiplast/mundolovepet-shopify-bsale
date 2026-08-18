@@ -11,6 +11,8 @@ import type { Env } from '../config/env.js';
 import type { ConnectionService } from '../services/connection.service.js';
 import type { CatalogStore } from '../db/catalog.store.js';
 import { leerCatalogo, type ItemCatalogo } from '../services/catalog.service.js';
+import { compararCatalogos } from '../services/matching.service.js';
+import type { ShopifyVariant } from '../integrations/shopify/client.js';
 import { IntegrationError } from '../lib/errors.js';
 import { logger } from '../lib/logger.js';
 
@@ -103,6 +105,84 @@ export function catalogRouter(
               cause: error,
             });
       logger.error({ err: err.toPublic() }, 'Fallo al leer el catálogo de Bsale');
+      res.status(502).json({ error: err.toPublic() });
+    }
+  });
+
+  /**
+   * Compara el catálogo guardado de Bsale con el de Shopify — Fase 3, paso 1.
+   *
+   * SÓLO LECTURA. No escribe ni un precio. Su única función es responder a la
+   * pregunta de la que depende toda la sincronización: ¿los códigos de Bsale
+   * están en el campo `sku` de Shopify o en `barcode`?
+   *
+   * Si se acertara por suposición no pasaría nada; si se fallara, la
+   * sincronización no actualizaría ningún producto y no daría ningún error.
+   */
+  router.post('/catalog/match', lecturaLimiter, async (req: Request, res: Response) => {
+    const guardados = await store.listar();
+    if (guardados.length === 0) {
+      return res.status(400).json({
+        error: { message: 'Primero lee el catálogo de Bsale: no hay nada con lo que comparar.' },
+      });
+    }
+
+    const maxItems = Number(req.query.max) > 0 ? Number(req.query.max) : undefined;
+
+    try {
+      const variantes: ShopifyVariant[] = [];
+      await service.usarShopify(
+        env.SHOPIFY_SHOP_DOMAIN,
+        env.SHOPIFY_API_VERSION,
+        env.SHOPIFY_CLIENT_ID,
+        async (client) => {
+          for await (const v of client.listarVariantes(maxItems)) variantes.push(v);
+        },
+      );
+
+      const informe = compararCatalogos(
+        guardados.map((g) => ({
+          sku: g.sku,
+          bsaleVariantId: g.bsaleVariantId ?? 0,
+          nombre: g.name,
+          precio: g.bsalePrice,
+          stock: g.bsaleStock,
+        })),
+        variantes,
+      );
+
+      logger.info(
+        {
+          campo: informe.campoRecomendado,
+          porSku: informe.coincidenciasPorSku,
+          porBarcode: informe.coincidenciasPorBarcode,
+          emparejados: informe.emparejados.length,
+          conDiferencias: informe.conDiferencias,
+        },
+        'Emparejamiento Bsale ↔ Shopify calculado',
+      );
+
+      // La lista completa de emparejados puede ser enorme; el panel sólo
+      // necesita el resumen y una muestra de las diferencias.
+      res.json({
+        ok: true,
+        informe: {
+          ...informe,
+          emparejados: informe.emparejados.filter((e) => e.difierePrecio || e.difiereStock).slice(0, 200),
+          soloEnBsale: informe.soloEnBsale.slice(0, 100),
+          soloEnShopify: informe.soloEnShopify.slice(0, 100),
+        },
+      });
+    } catch (error) {
+      const err =
+        error instanceof IntegrationError
+          ? error
+          : new IntegrationError('No se pudo comparar los catálogos.', {
+              provider: 'SHOPIFY',
+              retryable: false,
+              cause: error,
+            });
+      logger.error({ err: err.toPublic() }, 'Fallo al comparar catálogos');
       res.status(502).json({ error: err.toPublic() });
     }
   });
