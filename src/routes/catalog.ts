@@ -162,15 +162,24 @@ export function catalogRouter(
         'Emparejamiento Bsale ↔ Shopify calculado',
       );
 
-      // La lista completa de emparejados puede ser enorme; el panel sólo
-      // necesita el resumen y una muestra de las diferencias.
+      // La lista completa puede ser enorme; el panel sólo necesita el resumen y
+      // una muestra. Los TOTALES viajan aparte: contar la muestra recortada
+      // haría que el panel mostrara «100» donde en realidad hay 197.
+      const conDiferencias = informe.emparejados.filter((e) => e.difierePrecio || e.difiereStock);
+
       res.json({
         ok: true,
         informe: {
           ...informe,
-          emparejados: informe.emparejados.filter((e) => e.difierePrecio || e.difiereStock).slice(0, 200),
+          emparejados: conDiferencias.slice(0, 200),
           soloEnBsale: informe.soloEnBsale.slice(0, 100),
           soloEnShopify: informe.soloEnShopify.slice(0, 100),
+          totales: {
+            emparejados: informe.emparejados.length,
+            conDiferencias: conDiferencias.length,
+            soloEnBsale: informe.soloEnBsale.length,
+            soloEnShopify: informe.soloEnShopify.length,
+          },
         },
       });
     } catch (error) {

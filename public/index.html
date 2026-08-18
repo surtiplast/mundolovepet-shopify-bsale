@@ -422,7 +422,14 @@ fetch('/api/catalog').then((r) => r.json()).then((d) => {
    ¿los códigos de Bsale están en el `sku` de Shopify o en el `barcode`? */
 function pintarMatch(inf) {
   const nombreCampo = inf.campoRecomendado === 'barcode' ? 'código de barras' : 'SKU';
-  const hay = inf.emparejados.length > 0 || inf.conDiferencias > 0;
+  /* Los totales vienen aparte: las listas de arriba están recortadas para no
+     mandar un JSON gigante, y contarlas daría cifras equivocadas. */
+  const tot = inf.totales || {
+    emparejados: inf.emparejados.length,
+    conDiferencias: inf.conDiferencias,
+    soloEnBsale: inf.soloEnBsale.length,
+    soloEnShopify: inf.soloEnShopify.length,
+  };
 
   $('matchResumen').innerHTML = [
     `<span class="cat-chip">Empareja por <b>${nombreCampo}</b></span>`,
@@ -430,8 +437,9 @@ function pintarMatch(inf) {
     `<span class="cat-chip">Por código de barras <b>${inf.coincidenciasPorBarcode}</b></span>`,
     `<span class="cat-chip">En Bsale <b>${inf.totalBsale}</b></span>`,
     `<span class="cat-chip">En Shopify <b>${inf.totalShopify}</b></span>`,
-    `<span class="cat-chip${inf.conDiferencias > 0 ? ' alerta' : ''}">Con diferencias <b>${inf.conDiferencias}</b></span>`,
-    `<span class="cat-chip${inf.soloEnBsale.length > 0 ? ' alerta' : ''}">Sólo en Bsale <b>${inf.soloEnBsale.length}</b></span>`,
+    `<span class="cat-chip${tot.conDiferencias > 0 ? ' alerta' : ''}">Con diferencias <b>${tot.conDiferencias}</b></span>`,
+    `<span class="cat-chip${tot.soloEnBsale > 0 ? ' alerta' : ''}">Sólo en Bsale <b>${tot.soloEnBsale}</b></span>`,
+    `<span class="cat-chip">Sólo en Shopify <b>${tot.soloEnShopify}</b></span>`,
   ].join('');
 
   $('matchAvisos').innerHTML = (inf.advertencias || [])
@@ -440,6 +448,9 @@ function pintarMatch(inf) {
 
   const filas = inf.emparejados || [];
   $('matchTablaCaja').hidden = filas.length === 0;
+  if (tot.conDiferencias > filas.length) {
+    $('matchAvisos').dataset.mas = `Mostrando ${filas.length} de ${tot.conDiferencias} diferencias.`;
+  }
   $('matchCuerpo').innerHTML = filas.map((e) => `<tr>
       <td class="sku">${escapeHtml(e.codigo)}</td>
       <td>${escapeHtml(e.nombreShopify || '')}</td>
