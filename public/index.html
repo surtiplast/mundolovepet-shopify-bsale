@@ -72,6 +72,35 @@
   .note strong{color:var(--txt)}
   footer{margin-top:34px;padding-top:18px;border-top:1px solid var(--line);
          color:var(--muted);font-size:12px;display:flex;gap:14px;flex-wrap:wrap}
+
+  /* ── Catálogo (Fase 2) ── */
+  .cat-titulo{margin:26px 0 12px;font-size:15px;font-weight:600}
+  .cat-resumen{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:14px}
+  .cat-chip{border:1px solid var(--line);background:var(--panel);border-radius:999px;
+            padding:5px 12px;font-size:12.5px;color:var(--muted)}
+  .cat-chip b{color:var(--txt);font-weight:600}
+  .cat-chip.alerta{border-color:color-mix(in srgb,var(--err) 45%,var(--line))}
+  .cat-chip.alerta b{color:var(--err)}
+
+  .cat-filtros{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+  .cat-filtros input[type=search]{flex:1;min-width:220px;background:var(--panel-2);color:var(--txt);
+            border:1px solid var(--line);border-radius:9px;padding:9px 12px;font-size:13px}
+  .cat-check{display:flex;gap:7px;align-items:center;font-size:12.5px;color:var(--muted);cursor:pointer}
+  .cat-conteo{font-size:12.5px;color:var(--muted);margin-left:auto}
+
+  .cat-tabla-scroll{border:1px solid var(--line);border-radius:11px;overflow:auto;max-height:460px}
+  .cat-tabla{width:100%;border-collapse:collapse;font-size:13px}
+  .cat-tabla th{position:sticky;top:0;background:var(--panel);text-align:left;font-weight:600;
+            padding:10px 13px;border-bottom:1px solid var(--line);font-size:12.5px}
+  .cat-tabla td{padding:9px 13px;border-bottom:1px solid var(--line);color:var(--txt)}
+  .cat-tabla tr:last-child td{border-bottom:none}
+  .cat-tabla .num{text-align:right;font-variant-numeric:tabular-nums}
+  .cat-tabla .sku{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+  .cat-tabla .vacio{color:var(--muted)}
+
+  .cat-tag{display:inline-block;border-radius:999px;padding:2px 9px;font-size:11.5px;margin-right:5px;
+            border:1px solid color-mix(in srgb,var(--err) 45%,var(--line));color:var(--err)}
+  .cat-tag.ok{border-color:color-mix(in srgb,var(--ok) 45%,var(--line));color:var(--ok)}
 </style>
 </head>
 <body>
@@ -83,7 +112,7 @@
       <h1>Mundo Love Pet — Shopify × Bsale</h1>
       <div class="sub">Panel de integración · Perú</div>
     </div>
-    <span class="phase" id="phaseBadge">Fase 1 · Conexión</span>
+    <span class="phase" id="phaseBadge">Fase 2 · Catálogo</span>
   </header>
 
   <div id="banner"></div>
@@ -92,9 +121,30 @@
     <button class="primary" id="btnAll">Probar ambas conexiones</button>
     <button id="btnDiscover">Descubrir configuración de Bsale</button>
     <button id="btnRefresh">Actualizar estado</button>
+    <button id="btnCatalog">Leer catálogo de Bsale</button>
   </div>
 
   <section class="grid" id="cards"></section>
+
+  <section id="catalogo" hidden>
+    <h2 class="cat-titulo">Catálogo de Bsale</h2>
+    <div id="catResumen" class="cat-resumen"></div>
+    <div class="cat-filtros">
+      <input id="catBuscar" type="search" placeholder="Buscar por SKU o nombre…" autocomplete="off">
+      <label class="cat-check">
+        <input type="checkbox" id="catSoloProblemas"> Sólo con problemas
+      </label>
+      <span id="catConteo" class="cat-conteo"></span>
+    </div>
+    <div class="cat-tabla-scroll">
+      <table class="cat-tabla">
+        <thead>
+          <tr><th>SKU</th><th>Nombre</th><th class="num">Precio</th><th class="num">Stock</th><th>Estado</th></tr>
+        </thead>
+        <tbody id="catCuerpo"></tbody>
+      </table>
+    </div>
+  </section>
 
   <pre class="out" id="output"></pre>
 
@@ -232,6 +282,125 @@ fetch('/api/health').then((r) => r.json()).then((h) => {
   $('health').textContent =
     `Servicio ${h.status} · almacén: ${h.almacen} · Shopify API ${h.versionApiShopify}`;
 }).catch(() => { $('health').textContent = 'Servicio no disponible'; });
+
+/* ── Catálogo (Fase 2) ─────────────────────────────────────────────────────
+   El catálogo se guarda en memoria del navegador y el filtrado es local: con
+   miles de filas, ir al servidor en cada tecla haría el buscador inservible. */
+let catalogo = [];
+
+const ETIQUETA_PROBLEMA = {
+  SIN_SKU: 'Sin SKU',
+  SKU_DUPLICADO: 'SKU duplicado',
+  SIN_PRECIO: 'Sin precio',
+  SIN_STOCK: 'Sin stock',
+};
+
+function soles(v) {
+  return v == null ? '—' : 'S/ ' + Number(v).toFixed(2);
+}
+
+function pintarResumen(r) {
+  const chips = [
+    `<span class="cat-chip">Variantes <b>${r.total}</b></span>`,
+  ];
+  const problema = (n, etiqueta) =>
+    `<span class="cat-chip${n > 0 ? ' alerta' : ''}">${etiqueta} <b>${n}</b></span>`;
+
+  chips.push(problema(r.sinSku, 'Sin SKU'));
+  chips.push(problema(r.skusDuplicados, 'SKU duplicados'));
+  chips.push(problema(r.sinPrecio, 'Sin precio'));
+  chips.push(problema(r.sinStock, 'Sin stock'));
+
+  $('catResumen').innerHTML = chips.join('');
+}
+
+function pintarTabla() {
+  const texto = ($('catBuscar').value || '').trim().toLowerCase();
+  const soloProblemas = $('catSoloProblemas').checked;
+
+  const filas = catalogo.filter((i) => {
+    if (soloProblemas && (!i.problemas || i.problemas.length === 0)) return false;
+    if (!texto) return true;
+    return (i.sku || '').toLowerCase().includes(texto)
+        || (i.nombre || '').toLowerCase().includes(texto);
+  });
+
+  $('catConteo').textContent =
+    filas.length === catalogo.length
+      ? `${catalogo.length} variantes`
+      : `${filas.length} de ${catalogo.length}`;
+
+  if (filas.length === 0) {
+    $('catCuerpo').innerHTML =
+      '<tr><td colspan="5" class="vacio">Sin resultados.</td></tr>';
+    return;
+  }
+
+  /* Se pintan como mucho 500 filas. Más que eso cuelga el navegador y no
+     aporta: para revisar un catálogo grande se usa el buscador. */
+  const visibles = filas.slice(0, 500);
+
+  $('catCuerpo').innerHTML = visibles.map((i) => {
+    const tags = (i.problemas && i.problemas.length)
+      ? i.problemas.map((p) => `<span class="cat-tag">${ETIQUETA_PROBLEMA[p] || p}</span>`).join('')
+      : '<span class="cat-tag ok">Correcto</span>';
+    return `<tr>
+      <td class="sku">${escapeHtml(i.sku) || '<span class="vacio">—</span>'}</td>
+      <td>${escapeHtml(i.nombre || '')}</td>
+      <td class="num">${soles(i.precio)}</td>
+      <td class="num">${i.stock == null ? '—' : i.stock}</td>
+      <td>${tags}</td>
+    </tr>`;
+  }).join('') + (filas.length > visibles.length
+      ? `<tr><td colspan="5" class="vacio">…y ${filas.length - visibles.length} más. Afina la búsqueda.</td></tr>`
+      : '');
+}
+
+$('btnCatalog').onclick = async (e) => {
+  e.target.disabled = true;
+  const textoOriginal = e.target.textContent;
+  e.target.textContent = 'Leyendo catálogo…';
+  try {
+    const res = await fetch('/api/catalog/read', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      banner('err', data.error?.message || 'No se pudo leer el catálogo.');
+      show(data);
+    } else {
+      catalogo = data.items || [];
+      $('catalogo').hidden = false;
+      pintarResumen(data.resumen);
+      pintarTabla();
+      const r = data.resumen;
+      banner(
+        r.conProblemas > 0 ? 'err' : 'ok',
+        r.conProblemas > 0
+          ? `Catálogo leído: ${r.total} variantes, ${r.conProblemas} con problemas. Corrígelas en Bsale antes de sincronizar.`
+          : `Catálogo leído: ${r.total} variantes, todas correctas.`,
+      );
+    }
+  } catch (err) {
+    banner('err', 'Error de red al leer el catálogo.');
+  }
+  e.target.disabled = false;
+  e.target.textContent = textoOriginal;
+};
+
+$('catBuscar').oninput = pintarTabla;
+$('catSoloProblemas').onchange = pintarTabla;
+
+/* Al abrir el panel se muestra lo último leído, sin tocar Bsale. */
+fetch('/api/catalog').then((r) => r.json()).then((d) => {
+  if (!d.items || d.items.length === 0) return;
+  catalogo = d.items.map((i) => ({
+    sku: i.sku, nombre: i.name, precio: i.bsalePrice, stock: i.bsaleStock, problemas: [],
+  }));
+  $('catalogo').hidden = false;
+  $('catResumen').innerHTML =
+    `<span class="cat-chip">Guardadas <b>${d.total}</b></span>` +
+    '<span class="cat-chip">Pulsa «Leer catálogo» para actualizar y diagnosticar</span>';
+  pintarTabla();
+}).catch(() => {});
 
 refresh();
 </script>

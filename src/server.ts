@@ -23,10 +23,19 @@ import { InMemoryConnectionStore, type ConnectionStore } from './db/connection.s
 import { PrismaConnectionStore, type PrismaLike } from './db/prisma.store.js';
 import { ConnectionService } from './services/connection.service.js';
 import { connectionsRouter } from './routes/connections.js';
+import { catalogRouter } from './routes/catalog.js';
+import {
+  InMemoryCatalogStore,
+  PrismaCatalogStore,
+  type CatalogStore,
+  type PrismaCatalogLike,
+} from './db/catalog.store.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-async function resolveStore(env: Env): Promise<{ store: ConnectionStore; kind: string }> {
+async function resolveStore(
+  env: Env,
+): Promise<{ store: ConnectionStore; catalog: CatalogStore; kind: string }> {
   try {
     // Import dinámico: la app arranca aunque `prisma generate` no se haya
     // ejecutado todavía, lo que hace mucho más suave el primer despliegue.
@@ -35,17 +44,30 @@ async function resolveStore(env: Env): Promise<{ store: ConnectionStore; kind: s
     };
     const prisma = new mod.PrismaClient({ datasources: { db: { url: env.DATABASE_URL } } });
     await prisma.$connect();
-    return { store: new PrismaConnectionStore(prisma), kind: 'postgresql' };
+    return {
+      store: new PrismaConnectionStore(prisma),
+      catalog: new PrismaCatalogStore(prisma as unknown as PrismaCatalogLike),
+      kind: 'postgresql',
+    };
   } catch (error) {
     logger.warn(
       { reason: (error as Error).message },
       'No se pudo conectar a PostgreSQL. Usando almacén en memoria (los tokens no persistirán al reiniciar).',
     );
-    return { store: new InMemoryConnectionStore(), kind: 'memoria (volátil)' };
+    return {
+      store: new InMemoryConnectionStore(),
+      catalog: new InMemoryCatalogStore(),
+      kind: 'memoria (volátil)',
+    };
   }
 }
 
-export async function createApp(env: Env, store: ConnectionStore, storeKind: string) {
+export async function createApp(
+  env: Env,
+  store: ConnectionStore,
+  storeKind: string,
+  catalog: CatalogStore = new InMemoryCatalogStore(),
+) {
   const encryptionKey = parseEncryptionKey(env.ENCRYPTION_KEY);
   const service = new ConnectionService({ store, encryptionKey });
 
@@ -99,6 +121,7 @@ export async function createApp(env: Env, store: ConnectionStore, storeKind: str
   });
 
   app.use('/api', connectionsRouter(service, env));
+  app.use('/api', catalogRouter(service, catalog, env));
 
   app.use(express.static(path.join(__dirname, '..', 'public')));
 
@@ -121,8 +144,8 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const { store, kind } = await resolveStore(env);
-  const { app } = await createApp(env, store, kind);
+  const { store, catalog, kind } = await resolveStore(env);
+  const { app } = await createApp(env, store, kind, catalog);
 
   app.listen(env.PORT, () => {
     logger.info(

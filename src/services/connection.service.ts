@@ -135,6 +135,19 @@ export class ConnectionService {
     return this.toView(saved);
   }
 
+  /**
+   * Presta un cliente de Bsale ya autenticado, sin entregar el token.
+   *
+   * Otras partes de la app (la lectura del catálogo, por ejemplo) necesitan
+   * hablar con Bsale, pero el token sigue sin salir de aquí: se les da el
+   * cliente ya construido y ellas lo usan dentro de la función. Es la forma de
+   * mantener la regla de que `revealToken` es privado.
+   */
+  async usarBsale<T>(baseUrl: string, fn: (client: BsaleClient) => Promise<T>): Promise<T> {
+    const token = await this.revealToken('BSALE');
+    return fn(this.makeBsale(token, baseUrl));
+  }
+
   /** Descifra el token. Método privado a propósito: nunca sale de esta clase. */
   private async revealToken(provider: ProviderName): Promise<string> {
     const record = await this.store.get(provider);

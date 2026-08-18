@@ -80,6 +80,47 @@ export interface BsalePriceList {
   state?: number;
 }
 
+/**
+ * Variante de producto. GET /v1/variants.json
+ *
+ * La variante es la unidad real del catálogo: lo que tiene SKU, precio y stock.
+ * El «producto» de Bsale es la agrupación (por ejemplo «Collar»), y sus
+ * variantes son las que se venden («Collar rojo talla M»).
+ *
+ * Un producto sin variantes explícitas tiene igualmente una variante por
+ * defecto, así que recorrer variantes cubre el catálogo entero.
+ */
+export interface BsaleVariant {
+  href: string;
+  id: number;
+  description?: string | null;
+  /** El SKU. Es la clave que une Bsale con Shopify. Puede venir vacío. */
+  code?: string | null;
+  barCode?: string | null;
+  state?: number;
+  product?: { href?: string; id?: number } | null;
+}
+
+/** Precio de una variante en una lista. GET /v1/price_lists/{id}/details.json */
+export interface BsalePriceDetail {
+  href: string;
+  id: number;
+  variant?: { href?: string; id?: number } | null;
+  variantValue?: number;
+  variantValueWithTaxes?: number;
+}
+
+/** Stock por variante y sucursal. GET /v1/stocks.json */
+export interface BsaleStock {
+  href: string;
+  id: number;
+  quantity?: number;
+  quantityReserved?: number;
+  quantityAvailable?: number;
+  variant?: { href?: string; id?: number } | null;
+  office?: { href?: string; id?: number } | null;
+}
+
 const DEFAULT_BASE_URL = 'https://api.bsale.io/v1';
 
 export class BsaleClient {
@@ -143,6 +184,79 @@ export class BsaleClient {
 
   listPriceLists(): Promise<BsalePage<BsalePriceList>> {
     return this.get<BsalePage<BsalePriceList>>('/price_lists.json', { limit: BSALE_MAX_LIMIT });
+  }
+
+  // ── Catálogo (Fase 2) ──────────────────────────────────────────────────────
+
+  /**
+   * Recorre TODAS las páginas de un recurso paginado.
+   *
+   * Bsale devuelve como mucho 50 elementos por página. Quedarse con la primera
+   * es el error clásico: en pruebas parece que funciona —porque el catálogo de
+   * prueba cabe en una página— y en producción sincroniza sólo los 50 primeros
+   * productos sin dar ningún error.
+   *
+   * Se avanza por `offset` y no por el campo `next` porque `next` es una URL
+   * absoluta que ya trae el token en algunos despliegues, y no queremos que un
+   * token acabe en una URL que pueda registrarse.
+   *
+   * `maxItems` es un tope de seguridad: sin él, un `count` erróneo del servidor
+   * dejaría el bucle girando indefinidamente.
+   */
+  async *paginar<T>(
+    path: string,
+    query: Record<string, string | number | undefined> = {},
+    maxItems = 100_000,
+  ): AsyncGenerator<T, void, undefined> {
+    let offset = 0;
+    let vistos = 0;
+
+    for (;;) {
+      const page = await this.get<BsalePage<T>>(path, {
+        ...query,
+        limit: BSALE_MAX_LIMIT,
+        offset,
+      });
+
+      const items = page.items ?? [];
+      for (const item of items) {
+        yield item;
+        vistos++;
+        if (vistos >= maxItems) return;
+      }
+
+      // Última página: llegó menos de lo pedido, o ya cubrimos el total.
+      if (items.length < BSALE_MAX_LIMIT) return;
+      if (typeof page.count === 'number' && vistos >= page.count) return;
+
+      offset += BSALE_MAX_LIMIT;
+    }
+  }
+
+  /** Todas las variantes activas del catálogo. Es la unidad con SKU. */
+  listarVariantes(maxItems?: number): AsyncGenerator<BsaleVariant, void, undefined> {
+    // expand=[product] evita una petición extra por variante para conocer su
+    // producto: con miles de variantes, esa diferencia es de minutos.
+    return this.paginar<BsaleVariant>('/variants.json', { expand: '[product]' }, maxItems);
+  }
+
+  /** Precios de una lista concreta. Bsale no expone «el precio» sin lista. */
+  listarPrecios(
+    priceListId: number,
+    maxItems?: number,
+  ): AsyncGenerator<BsalePriceDetail, void, undefined> {
+    return this.paginar<BsalePriceDetail>(`/price_lists/${priceListId}/details.json`, {}, maxItems);
+  }
+
+  /**
+   * Stock de una sucursal.
+   *
+   * Se filtra por sucursal a propósito: sin `officeid`, Bsale devuelve una fila
+   * por variante Y sucursal, y con varias sucursales el número de páginas se
+   * multiplica sin que ninguna de las extra sirva para nada.
+   */
+  listarStock(officeId: number, maxItems?: number): AsyncGenerator<BsaleStock, void, undefined> {
+    return this.paginar<BsaleStock>('/stocks.json', { officeid: officeId }, maxItems);
   }
 
   // ── Transporte ─────────────────────────────────────────────────────────────
