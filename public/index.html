@@ -73,6 +73,9 @@
   footer{margin-top:34px;padding-top:18px;border-top:1px solid var(--line);
          color:var(--muted);font-size:12px;display:flex;gap:14px;flex-wrap:wrap}
 
+  button.peligro{border-color:color-mix(in srgb,var(--err) 55%,var(--line));color:var(--err)}
+  button.peligro:hover{background:color-mix(in srgb,var(--err) 12%,transparent)}
+
   /* ── Catálogo (Fase 2) ── */
   .cat-titulo{margin:26px 0 12px;font-size:15px;font-weight:600}
   .cat-resumen{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:14px}
@@ -112,7 +115,7 @@
       <h1>Mundo Love Pet — Shopify × Bsale</h1>
       <div class="sub">Panel de integración · Perú</div>
     </div>
-    <span class="phase" id="phaseBadge">Fase 3 · Emparejamiento</span>
+    <span class="phase" id="phaseBadge">Fase 3 · Sincronización</span>
   </header>
 
   <div id="banner"></div>
@@ -123,9 +126,26 @@
     <button id="btnRefresh">Actualizar estado</button>
     <button id="btnCatalog">Leer catálogo de Bsale</button>
     <button id="btnMatch">Comparar con Shopify</button>
+    <button id="btnSimStock">Simular stock</button>
+    <button id="btnAplicarStock" class="peligro">Actualizar stock en Shopify</button>
+    <button id="btnSimPrecio">Simular precios</button>
+    <button id="btnAplicarPrecio" class="peligro">Actualizar precios en Shopify</button>
   </div>
 
   <section class="grid" id="cards"></section>
+
+  <section id="sync" hidden>
+    <h2 class="cat-titulo">Sincronización</h2>
+    <div id="syncResumen" class="cat-resumen"></div>
+    <div class="cat-tabla-scroll" id="syncTablaCaja" hidden>
+      <table class="cat-tabla">
+        <thead>
+          <tr><th>Código</th><th>Producto</th><th class="num">Ahora en Shopify</th><th class="num">Quedará</th></tr>
+        </thead>
+        <tbody id="syncCuerpo"></tbody>
+      </table>
+    </div>
+  </section>
 
   <section id="match" hidden>
     <h2 class="cat-titulo">Emparejamiento con Shopify</h2>
@@ -489,6 +509,133 @@ $('btnMatch').onclick = async (e) => {
   e.target.disabled = false;
   e.target.textContent = textoOriginal;
 };
+
+/* ── Sincronización (Fase 3) ───────────────────────────────────────────────
+   Simular no toca la tienda. Aplicar sí, y por eso pide confirmación con el
+   número exacto de productos que va a cambiar: aceptar «¿seguro?» a ciegas no
+   protege de nada. */
+function pintarSync(d) {
+  const r = d.resumen;
+  const esStock = d.tipo === 'STOCK';
+  const chips = [
+    `<span class="cat-chip">${d.simulacion ? 'Simulación' : 'Aplicado'} · ${esStock ? 'stock' : 'precios'}</span>`,
+    `<span class="cat-chip">Cambios <b>${r.total}</b></span>`,
+  ];
+
+  if (esStock) {
+    chips.push(`<span class="cat-chip${r.seAgotan > 0 ? ' alerta' : ''}">Se agotan <b>${r.seAgotan}</b></span>`);
+    chips.push(`<span class="cat-chip">Se reponen <b>${r.seReponen}</b></span>`);
+  } else {
+    chips.push(`<span class="cat-chip">Suben <b>${r.suben}</b></span>`);
+    chips.push(`<span class="cat-chip">Bajan <b>${r.bajan}</b></span>`);
+  }
+
+  if (d.totalOmitidos > 0) {
+    chips.push(`<span class="cat-chip alerta">Omitidos <b>${d.totalOmitidos}</b></span>`);
+  }
+  if (d.resultado) {
+    chips.push(`<span class="cat-chip">Aplicados <b>${d.resultado.aplicados}</b></span>`);
+    if (d.resultado.fallidos > 0) {
+      chips.push(`<span class="cat-chip alerta">Fallidos <b>${d.resultado.fallidos}</b></span>`);
+    }
+  }
+  $('syncResumen').innerHTML = chips.join('');
+
+  const filas = d.cambios || [];
+  $('syncTablaCaja').hidden = filas.length === 0;
+  $('syncCuerpo').innerHTML = filas.map((c) => {
+    const antes = esStock ? (c.valorAnterior == null ? '—' : c.valorAnterior) : soles(c.valorAnterior);
+    const luego = esStock ? c.valorNuevo : soles(c.valorNuevo);
+    const agota = esStock && c.valorNuevo === 0;
+    return `<tr>
+      <td class="sku">${escapeHtml(c.codigo)}</td>
+      <td>${escapeHtml(c.nombre || '')}</td>
+      <td class="num">${antes}</td>
+      <td class="num"${agota ? ' style="color:var(--err)"' : ''}>${luego}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function sincronizar(tipo, aplicar, boton) {
+  boton.disabled = true;
+  const original = boton.textContent;
+  boton.textContent = aplicar ? 'Actualizando…' : 'Simulando…';
+  try {
+    const url = aplicar
+      ? `/api/sync/apply?tipo=${tipo}&confirmar=si`
+      : `/api/sync/preview?tipo=${tipo}`;
+    const res = await fetch(url, { method: 'POST' });
+    const data = await res.json();
+
+    if (!res.ok) {
+      banner('err', data.error?.message || 'No se pudo completar la operación.');
+      show(data);
+    } else {
+      $('sync').hidden = false;
+      pintarSync(data);
+      if (aplicar) {
+        const r = data.resultado;
+        banner(
+          r.fallidos > 0 ? 'err' : 'ok',
+          `Actualizados ${r.aplicados} productos en Shopify.` +
+            (r.fallidos > 0 ? ` ${r.fallidos} fallaron.` : ''),
+        );
+        if (r.errores?.length) show(r.errores);
+      } else {
+        banner('ok', `Simulación: cambiarían ${data.resumen.total} productos. No se ha modificado nada.`);
+      }
+    }
+  } catch (err) {
+    banner('err', 'Error de red durante la sincronización.');
+  }
+  boton.disabled = false;
+  boton.textContent = original;
+}
+
+$('btnSimStock').onclick = (e) => sincronizar('STOCK', false, e.target);
+$('btnSimPrecio').onclick = (e) => sincronizar('PRECIO', false, e.target);
+
+/* Aplicar pide confirmación con el número real de cambios: se simula primero
+   y se pregunta con ese dato delante, no con un «¿seguro?» genérico. */
+async function confirmarYAplicar(tipo, boton) {
+  boton.disabled = true;
+  const original = boton.textContent;
+  boton.textContent = 'Calculando…';
+  try {
+    const res = await fetch(`/api/sync/preview?tipo=${tipo}`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      banner('err', data.error?.message || 'No se pudo calcular.');
+      boton.disabled = false; boton.textContent = original; return;
+    }
+    $('sync').hidden = false;
+    pintarSync(data);
+
+    const r = data.resumen;
+    const detalle = tipo === 'STOCK'
+      ? `${r.total} productos cambiarán de stock. ${r.seAgotan} quedarán AGOTADOS.`
+      : `${r.total} productos cambiarán de precio. ${r.suben} suben y ${r.bajan} bajan.`;
+
+    if (r.total === 0) {
+      banner('ok', 'No hay nada que actualizar: la tienda ya coincide con Bsale.');
+      boton.disabled = false; boton.textContent = original; return;
+    }
+
+    if (!confirm(`Vas a modificar tu tienda de Shopify.\n\n${detalle}\n\nEsto no se deshace automáticamente. ¿Continuar?`)) {
+      banner('ok', 'Cancelado. No se ha modificado nada.');
+      boton.disabled = false; boton.textContent = original; return;
+    }
+  } catch (err) {
+    banner('err', 'Error de red al calcular la simulación.');
+    boton.disabled = false; boton.textContent = original; return;
+  }
+  boton.disabled = false;
+  boton.textContent = original;
+  await sincronizar(tipo, true, boton);
+}
+
+$('btnAplicarStock').onclick = (e) => confirmarYAplicar('STOCK', e.target);
+$('btnAplicarPrecio').onclick = (e) => confirmarYAplicar('PRECIO', e.target);
 
 refresh();
 </script>

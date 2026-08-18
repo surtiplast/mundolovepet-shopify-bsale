@@ -148,6 +148,71 @@ const VARIANTS_QUERY = /* GraphQL */ `
   }
 `;
 
+/**
+ * Precio de una variante.
+ *
+ * `productVariantsBulkUpdate` exige el id del producto además del de la
+ * variante, y admite hasta 250 variantes por llamada — pero todas del MISMO
+ * producto. Por eso el servicio agrupa por producto antes de llamar.
+ */
+const PRECIO_MUTATION = /* GraphQL */ `
+  mutation ActualizarPrecios($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+    productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+      productVariants {
+        id
+        price
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+/**
+ * Inventario.
+ *
+ * Se usa `inventorySetQuantities` con `name: "available"`, que FIJA la cantidad
+ * al valor indicado. La alternativa (`inventoryAdjustQuantities`) suma o resta
+ * un delta, y con dos procesos sincronizando a la vez acabaría descuadrando.
+ * Aquí Bsale es la fuente de verdad: se fija, no se ajusta.
+ *
+ * `ignoreCompareQuantity: true` porque no estamos resolviendo conflictos entre
+ * escrituras simultáneas: la última sincronización manda.
+ */
+const INVENTARIO_MUTATION = /* GraphQL */ `
+  mutation FijarInventario($input: InventorySetQuantitiesInput!) {
+    inventorySetQuantities(input: $input) {
+      inventoryAdjustmentGroup {
+        createdAt
+        reason
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+export interface CambioPrecio {
+  productId: string;
+  variantId: string;
+  precio: string;
+}
+
+export interface CambioInventario {
+  inventoryItemId: string;
+  locationId: string;
+  cantidad: number;
+}
+
+export interface ResultadoEscritura {
+  ok: boolean;
+  errores: string[];
+}
+
 export class ShopifyClient {
   private readonly shopDomain: string;
   private readonly accessToken: AccessTokenSource;
@@ -274,6 +339,67 @@ export class ShopifyClient {
       // Sin cursor no se puede continuar; salir es mejor que repetir la página.
       if (!after) return;
     }
+  }
+
+  // ── Escritura (Fase 3) ─────────────────────────────────────────────────────
+
+  /**
+   * Fija el precio de varias variantes del MISMO producto.
+   *
+   * Shopify devuelve HTTP 200 con `userErrors` cuando rechaza el cambio: hay
+   * que mirarlos, o una actualización fallida pasaría por buena.
+   */
+  async actualizarPrecios(
+    productId: string,
+    cambios: Array<{ variantId: string; precio: string }>,
+  ): Promise<ResultadoEscritura> {
+    const data = await this.query<{
+      productVariantsBulkUpdate: {
+        productVariants: Array<{ id: string; price: string }> | null;
+        userErrors: Array<{ field: string[] | null; message: string }>;
+      };
+    }>(PRECIO_MUTATION, {
+      productId,
+      variants: cambios.map((c) => ({ id: c.variantId, price: c.precio })),
+    });
+
+    const errores = (data.productVariantsBulkUpdate?.userErrors ?? []).map(
+      (e) => `${(e.field ?? []).join('.')}: ${e.message}`,
+    );
+    return { ok: errores.length === 0, errores };
+  }
+
+  /**
+   * Fija el inventario disponible de varios artículos en una sucursal.
+   *
+   * `reason: 'correction'` porque eso es exactamente lo que es: el stock de
+   * Shopify estaba mal y se corrige con el de Bsale. Queda registrado así en el
+   * historial de inventario de la tienda, que es lo que verá el comerciante.
+   */
+  async fijarInventario(cambios: CambioInventario[]): Promise<ResultadoEscritura> {
+    if (cambios.length === 0) return { ok: true, errores: [] };
+
+    const data = await this.query<{
+      inventorySetQuantities: {
+        userErrors: Array<{ field: string[] | null; message: string }>;
+      };
+    }>(INVENTARIO_MUTATION, {
+      input: {
+        name: 'available',
+        reason: 'correction',
+        ignoreCompareQuantity: true,
+        quantities: cambios.map((c) => ({
+          inventoryItemId: c.inventoryItemId,
+          locationId: c.locationId,
+          quantity: c.cantidad,
+        })),
+      },
+    });
+
+    const errores = (data.inventorySetQuantities?.userErrors ?? []).map(
+      (e) => `${(e.field ?? []).join('.')}: ${e.message}`,
+    );
+    return { ok: errores.length === 0, errores };
   }
 
   // ── Transporte ─────────────────────────────────────────────────────────────

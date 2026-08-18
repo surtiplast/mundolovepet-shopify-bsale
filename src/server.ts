@@ -24,6 +24,7 @@ import { PrismaConnectionStore, type PrismaLike } from './db/prisma.store.js';
 import { ConnectionService } from './services/connection.service.js';
 import { connectionsRouter } from './routes/connections.js';
 import { catalogRouter } from './routes/catalog.js';
+import { syncRouter } from './routes/sync.js';
 import {
   InMemoryCatalogStore,
   PrismaCatalogStore,
@@ -122,6 +123,7 @@ export async function createApp(
 
   app.use('/api', connectionsRouter(service, env));
   app.use('/api', catalogRouter(service, catalog, env));
+  app.use('/api', syncRouter(service, catalog, env));
 
   app.use(express.static(path.join(__dirname, '..', 'public')));
 
