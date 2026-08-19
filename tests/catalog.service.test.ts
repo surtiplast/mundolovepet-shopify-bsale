@@ -28,6 +28,12 @@ function variante(id: number, code: string | null, descripcion = `Variante ${id}
   return { href: '', id, code, description: descripcion, product: { id: 900 + id } };
 }
 
+/** Variante sin descripción propia, con el nombre en el producto. Es el caso
+ *  mayoritario en el catálogo real de Bsale. */
+function varianteSinDescripcion(id: number, code: string, nombreProducto: string) {
+  return { href: '', id, code, description: '', product: { id: 900 + id, name: nombreProducto } };
+}
+
 /** fetch simulado que responde según la ruta y el offset pedidos. */
 function fakeFetch(rutas: Record<string, unknown[]>) {
   return vi.fn(async (input: string | URL) => {
@@ -121,6 +127,45 @@ describe('leerCatalogo', () => {
 
     const { items } = await leerCatalogo(client, { priceListId: 4, officeId: 1 });
     expect(items[0]!.precio).toBe(59.9);
+  });
+
+  describe('nombres', () => {
+    it('usa el nombre del PRODUCTO cuando la variante no tiene descripción', async () => {
+      const fetchMock = fakeFetch({
+        '/variants.json': [
+          varianteSinDescripcion(1, 'A-1', 'EQUILIBRIO GRAIN FREE PUPPIES SMALL BREEDS 1.5'),
+        ],
+      });
+      const client = makeClient(fetchMock as unknown as typeof fetch);
+
+      const { items } = await leerCatalogo(client, { priceListId: 4, officeId: 1 });
+
+      expect(items[0]!.nombre).toBe('EQUILIBRIO GRAIN FREE PUPPIES SMALL BREEDS 1.5');
+    });
+
+    it('prefiere la descripción de la variante cuando existe', async () => {
+      const fetchMock = fakeFetch({
+        '/variants.json': [
+          { href: '', id: 1, code: 'A-1', description: 'Talla M', product: { id: 9, name: 'Collar' } },
+        ],
+      });
+      const client = makeClient(fetchMock as unknown as typeof fetch);
+
+      const { items } = await leerCatalogo(client, { priceListId: 4, officeId: 1 });
+
+      expect(items[0]!.nombre).toBe('Talla M');
+    });
+
+    it('pide el producto expandido, o el nombre nunca llegaría', async () => {
+      const fetchMock = fakeFetch({ '/variants.json': [variante(1, 'A-1')] });
+      const client = makeClient(fetchMock as unknown as typeof fetch);
+
+      await leerCatalogo(client, { priceListId: 4, officeId: 1 });
+
+      const urls = fetchMock.mock.calls.map((c) => String(c[0]));
+      const variantesUrl = urls.find((u) => u.includes('/variants.json'));
+      expect(decodeURIComponent(variantesUrl ?? '')).toContain('expand=[product]');
+    });
   });
 
   describe('diagnóstico', () => {

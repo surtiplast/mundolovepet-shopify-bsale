@@ -127,7 +127,10 @@ export async function leerCatalogo(
       bsaleVariantId: v.id,
       bsaleProductId: v.product?.id ?? null,
       sku: skuCrudo,
-      nombre: v.description ?? null,
+      // El nombre de la VARIANTE suele venir vacío; el comercial está en el
+      // producto. Se prefiere la variante cuando existe («Talla M») y se cae al
+      // producto cuando no, que es el caso mayoritario.
+      nombre: (v.description?.trim() || v.product?.name?.trim()) ?? null,
       precio,
       stock,
       problemas,

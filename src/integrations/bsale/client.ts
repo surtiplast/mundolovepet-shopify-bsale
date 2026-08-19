@@ -98,7 +98,14 @@ export interface BsaleVariant {
   code?: string | null;
   barCode?: string | null;
   state?: number;
-  product?: { href?: string; id?: number } | null;
+  /**
+   * El producto al que pertenece. Llega gracias a `expand=[product]`.
+   *
+   * Su `name` importa mucho: en Bsale el nombre comercial suele estar aquí y no
+   * en la variante. «EQUILIBRIO GRAIN FREE PUPPIES SMALL BREEDS 1.5» es el
+   * nombre del producto; la variante puede no tener descripción ninguna.
+   */
+  product?: { href?: string; id?: number; name?: string | null } | null;
 }
 
 /** Precio de una variante en una lista. GET /v1/price_lists/{id}/details.json */
