@@ -151,6 +151,13 @@
     <h2 class="cat-titulo">Emparejamiento con Shopify</h2>
     <div id="matchResumen" class="cat-resumen"></div>
     <div id="matchAvisos"></div>
+    <div class="cat-filtros" id="matchFiltros" hidden>
+      <input id="matchBuscar" type="search" placeholder="Buscar por código o producto…" autocomplete="off">
+      <label class="cat-check">
+        <input type="checkbox" id="matchSoloDif"> Sólo los que varían
+      </label>
+      <span id="matchConteo" class="cat-conteo"></span>
+    </div>
     <div class="cat-tabla-scroll" id="matchTablaCaja" hidden>
       <table class="cat-tabla">
         <thead>
@@ -440,6 +447,8 @@ fetch('/api/catalog').then((r) => r.json()).then((d) => {
 /* ── Emparejamiento con Shopify (Fase 3, paso 1) ───────────────────────────
    Sólo lectura. Responde a la pregunta de la que depende la sincronización:
    ¿los códigos de Bsale están en el `sku` de Shopify o en el `barcode`? */
+let emparejados = [];
+
 function pintarMatch(inf) {
   const nombreCampo = inf.campoRecomendado === 'barcode' ? 'código de barras' : 'SKU';
   /* Los totales vienen aparte: las listas de arriba están recortadas para no
@@ -466,20 +475,54 @@ function pintarMatch(inf) {
     .map((a) => `<div class="banner err" style="margin:10px 0"><span>${escapeHtml(a)}</span></div>`)
     .join('');
 
-  const filas = inf.emparejados || [];
-  $('matchTablaCaja').hidden = filas.length === 0;
-  if (tot.conDiferencias > filas.length) {
-    $('matchAvisos').dataset.mas = `Mostrando ${filas.length} de ${tot.conDiferencias} diferencias.`;
+  /* Se guardan todos los emparejados y el filtrado ocurre en el navegador:
+     así se puede buscar cualquier producto, no sólo los que fallan. */
+  emparejados = inf.emparejados || [];
+  $('matchFiltros').hidden = emparejados.length === 0;
+  pintarMatchTabla();
+}
+
+function pintarMatchTabla() {
+  const texto = ($('matchBuscar').value || '').trim().toLowerCase();
+  const soloDif = $('matchSoloDif').checked;
+
+  const filas = emparejados.filter((e) => {
+    if (soloDif && !e.difierePrecio && !e.difiereStock) return false;
+    if (!texto) return true;
+    return (e.codigo || '').toLowerCase().includes(texto)
+        || (e.nombreShopify || '').toLowerCase().includes(texto);
+  });
+
+  const conDif = emparejados.filter((e) => e.difierePrecio || e.difiereStock).length;
+  $('matchConteo').textContent =
+    `${filas.length} de ${emparejados.length} · ${conDif} varían`;
+
+  $('matchTablaCaja').hidden = false;
+
+  if (filas.length === 0) {
+    $('matchCuerpo').innerHTML =
+      '<tr><td colspan="6" class="vacio">Sin resultados.</td></tr>';
+    return;
   }
-  $('matchCuerpo').innerHTML = filas.map((e) => `<tr>
+
+  /* Tope de pintado: más de 500 filas cuelga el navegador y no aporta —
+     para eso está el buscador. */
+  const visibles = filas.slice(0, 500);
+
+  $('matchCuerpo').innerHTML = visibles.map((e) => `<tr>
       <td class="sku">${escapeHtml(e.codigo)}</td>
       <td>${escapeHtml(e.nombreShopify || '')}</td>
       <td class="num">${soles(e.precioBsale)}</td>
       <td class="num"${e.difierePrecio ? ' style="color:var(--err)"' : ''}>${soles(e.precioShopify)}</td>
       <td class="num">${e.stockBsale == null ? '—' : e.stockBsale}</td>
       <td class="num"${e.difiereStock ? ' style="color:var(--err)"' : ''}>${e.stockShopify == null ? '—' : e.stockShopify}</td>
-    </tr>`).join('');
+    </tr>`).join('') + (filas.length > visibles.length
+      ? `<tr><td colspan="6" class="vacio">…y ${filas.length - visibles.length} más. Afina la búsqueda.</td></tr>`
+      : '');
 }
+
+$('matchBuscar').oninput = pintarMatchTabla;
+$('matchSoloDif').onchange = pintarMatchTabla;
 
 $('btnMatch').onclick = async (e) => {
   e.target.disabled = true;

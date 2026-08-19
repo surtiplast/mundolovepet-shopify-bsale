@@ -162,16 +162,19 @@ export function catalogRouter(
         'Emparejamiento Bsale ↔ Shopify calculado',
       );
 
-      // La lista completa puede ser enorme; el panel sólo necesita el resumen y
-      // una muestra. Los TOTALES viajan aparte: contar la muestra recortada
-      // haría que el panel mostrara «100» donde en realidad hay 197.
+      // Se mandan TODOS los emparejados, no sólo los que difieren: el panel
+      // filtra en local y así el comerciante puede buscar cualquier producto y
+      // ver cómo está, no únicamente los que fallan.
+      //
+      // El tope existe igualmente: un catálogo de 50.000 variantes haría un
+      // JSON de varios megas que el navegador tardaría en procesar.
       const conDiferencias = informe.emparejados.filter((e) => e.difierePrecio || e.difiereStock);
 
       res.json({
         ok: true,
         informe: {
           ...informe,
-          emparejados: conDiferencias.slice(0, 200),
+          emparejados: informe.emparejados.slice(0, 5000),
           soloEnBsale: informe.soloEnBsale.slice(0, 100),
           soloEnShopify: informe.soloEnShopify.slice(0, 100),
           totales: {
