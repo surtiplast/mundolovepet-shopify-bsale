@@ -24,6 +24,11 @@ import {
   type TipoSync,
   type ResultadoAplicacion,
 } from '../services/sync.service.js';
+import {
+  planificarCreacion,
+  crearProductos,
+  type ResultadoCreacion,
+} from '../services/create.service.js';
 import type { ShopifyVariant } from '../integrations/shopify/client.js';
 import { IntegrationError } from '../lib/errors.js';
 import { logger } from '../lib/logger.js';
@@ -172,6 +177,88 @@ export function syncRouter(service: ConnectionService, store: CatalogStore, env:
       res.json({ ok: true, simulacion: false, tipo, resultado, resumen: plan.resumen });
     } catch (error) {
       responderError(res, error, 'No se pudo aplicar la sincronización.');
+    }
+  });
+
+  /**
+   * Alta de los productos que sólo existen en Bsale.
+   *
+   * Se crean SIEMPRE en borrador. `confirmar=si` es obligatorio igual que en la
+   * sincronización; sin él, simula.
+   */
+  router.post('/sync/crear', syncLimiter, async (req: Request, res: Response) => {
+    const aplicar = String(req.query.confirmar) === 'si';
+    const limite = Number(req.query.limite) > 0 ? Number(req.query.limite) : undefined;
+
+    try {
+      const guardados = await store.listar();
+      if (guardados.length === 0) {
+        throw new IntegrationError('No hay catálogo de Bsale leído todavía.', {
+          provider: 'BSALE',
+          retryable: false,
+        });
+      }
+
+      const variantes: ShopifyVariant[] = [];
+      let locationId: string | null = null;
+
+      await service.usarShopify(
+        env.SHOPIFY_SHOP_DOMAIN,
+        env.SHOPIFY_API_VERSION,
+        env.SHOPIFY_CLIENT_ID,
+        async (client) => {
+          for await (const v of client.listarVariantes()) variantes.push(v);
+          const ubicaciones = await client.listLocations(10);
+          locationId = ubicaciones.find((u) => u.isActive)?.id ?? ubicaciones[0]?.id ?? null;
+        },
+      );
+
+      const informe = compararCatalogos(
+        guardados.map((g) => ({
+          sku: g.sku,
+          bsaleVariantId: g.bsaleVariantId ?? 0,
+          nombre: g.name,
+          precio: g.bsalePrice,
+          stock: g.bsaleStock,
+        })),
+        variantes,
+      );
+
+      const plan = planificarCreacion(guardados, informe.soloEnBsale, limite);
+
+      if (!aplicar) {
+        return res.json({
+          ok: true,
+          simulacion: true,
+          resumen: plan.resumen,
+          candidatos: plan.candidatos.slice(0, 200),
+          omitidos: plan.omitidos.slice(0, 50),
+          totalOmitidos: plan.omitidos.length,
+        });
+      }
+
+      if (!locationId) {
+        throw new IntegrationError('No se encontró ninguna sucursal activa en Shopify.', {
+          provider: 'SHOPIFY',
+          retryable: false,
+        });
+      }
+
+      let resultado: ResultadoCreacion = { creados: 0, fallidos: 0, errores: [], ids: [] };
+      await service.usarShopify(
+        env.SHOPIFY_SHOP_DOMAIN,
+        env.SHOPIFY_API_VERSION,
+        env.SHOPIFY_CLIENT_ID,
+        async (client) => {
+          resultado = await crearProductos(client, plan, locationId!);
+        },
+      );
+
+      logger.info({ ...resultado, planificados: plan.candidatos.length }, 'Productos creados en borrador');
+
+      res.json({ ok: true, simulacion: false, resumen: plan.resumen, resultado });
+    } catch (error) {
+      responderError(res, error, 'No se pudieron crear los productos.');
     }
   });
 

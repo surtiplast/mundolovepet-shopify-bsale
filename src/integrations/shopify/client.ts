@@ -219,6 +219,60 @@ const INVENTARIO_MUTATION = /* GraphQL */ `
   }
 `;
 
+/**
+ * Alta de un producto nuevo.
+ *
+ * Se usa `productSet`, que Shopify recomienda expresamente para «sincronizar
+ * información desde una fuente de datos externa» — que es justo este caso. Crea
+ * el producto, su opción, su variante, el SKU, el código de barras, el precio y
+ * el stock en UNA llamada. Con `productCreate` harían falta tres.
+ *
+ * `synchronous: true` para que la respuesta traiga el producto ya creado y
+ * podamos reportar el resultado real. En modo asíncrono devolvería una
+ * operación en curso y habría que consultarla después.
+ *
+ * El producto se crea SIEMPRE en estado borrador. Ver `crearProductoBorrador`.
+ */
+const CREAR_PRODUCTO_MUTATION = /* GraphQL */ `
+  mutation CrearProducto($input: ProductSetInput!) {
+    productSet(synchronous: true, input: $input) {
+      product {
+        id
+        title
+        status
+        variants(first: 1) {
+          nodes {
+            id
+            sku
+            barcode
+            price
+          }
+        }
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+export interface ProductoNuevo {
+  titulo: string;
+  sku: string;
+  /** Precio con IGV. */
+  precio: number;
+  /** Stock inicial. Puede ser cero: el producto se crea agotado, que es correcto. */
+  stock: number | null;
+  locationId: string;
+}
+
+export interface ResultadoCreacion {
+  ok: boolean;
+  productId: string | null;
+  errores: string[];
+}
+
 export interface CambioPrecio {
   productId: string;
   variantId: string;
@@ -433,6 +487,71 @@ export class ShopifyClient {
       (e) => `${(e.field ?? []).join('.')}: ${e.message}`,
     );
     return { ok: errores.length === 0, errores };
+  }
+
+  /**
+   * Crea un producto en **borrador**, con una sola variante.
+   *
+   * ── Por qué borrador y no publicado ──────────────────────────────────────
+   *
+   * Un producto venido de Bsale llega sin foto, sin descripción y sin
+   * colección. Publicarlo automáticamente llenaría la tienda de fichas a medias
+   * que el cliente puede encontrar en el buscador. En borrador queda listo —con
+   * su SKU, precio y stock correctos— y el comerciante solo tiene que añadir la
+   * foto y publicarlo.
+   *
+   * El estado NO es configurable a propósito: dejar que se publique
+   * automáticamente es el tipo de opción que alguien activa «un momento para
+   * probar» y se olvida.
+   *
+   * ── El código va en `sku` Y en `barcode` ─────────────────────────────────
+   *
+   * En Mundo Love Pet los códigos de Bsale son EAN de 14 dígitos. En `sku`
+   * porque es lo que usa el emparejamiento; en `barcode` porque eso es lo que
+   * son y sirve para lectores de tienda y para Google Shopping.
+   */
+  async crearProductoBorrador(p: ProductoNuevo): Promise<ResultadoCreacion> {
+    const data = await this.query<{
+      productSet: {
+        product: { id: string } | null;
+        userErrors: Array<{ field: string[] | null; message: string }>;
+      };
+    }>(CREAR_PRODUCTO_MUTATION, {
+      input: {
+        title: p.titulo,
+        status: 'DRAFT',
+        // Un producto sin variantes explícitas necesita igualmente una opción.
+        // «Title / Default Title» es la convención de Shopify para eso.
+        productOptions: [{ name: 'Title', position: 1, values: [{ name: 'Default Title' }] }],
+        variants: [
+          {
+            optionValues: [{ optionName: 'Title', name: 'Default Title' }],
+            price: p.precio,
+            sku: p.sku,
+            barcode: p.sku,
+            // Sin `tracked: true` Shopify no lleva la cuenta del inventario y
+            // el producto se podría vender sin límite.
+            inventoryItem: { tracked: true },
+            ...(p.stock === null
+              ? {}
+              : {
+                  inventoryQuantities: [
+                    { locationId: p.locationId, name: 'available', quantity: p.stock },
+                  ],
+                }),
+          },
+        ],
+      },
+    });
+
+    const errores = (data.productSet?.userErrors ?? []).map(
+      (e) => `${(e.field ?? []).join('.')}: ${e.message}`,
+    );
+    return {
+      ok: errores.length === 0 && Boolean(data.productSet?.product?.id),
+      productId: data.productSet?.product?.id ?? null,
+      errores,
+    };
   }
 
   // ── Transporte ─────────────────────────────────────────────────────────────

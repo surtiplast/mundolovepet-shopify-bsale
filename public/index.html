@@ -130,6 +130,8 @@
     <button id="btnAplicarStock" class="peligro">Actualizar stock en Shopify</button>
     <button id="btnSimPrecio">Simular precios</button>
     <button id="btnAplicarPrecio" class="peligro">Actualizar precios en Shopify</button>
+    <button id="btnSimCrear">Simular alta de productos</button>
+    <button id="btnCrear" class="peligro">Crear productos en Shopify (borrador)</button>
   </div>
 
   <section class="grid" id="cards"></section>
@@ -683,6 +685,90 @@ async function confirmarYAplicar(tipo, boton) {
 
 $('btnAplicarStock').onclick = (e) => confirmarYAplicar('STOCK', e.target);
 $('btnAplicarPrecio').onclick = (e) => confirmarYAplicar('PRECIO', e.target);
+
+/* ── Alta de productos nuevos ──────────────────────────────────────────────
+   Se crean en BORRADOR: quedan con SKU, precio y stock correctos, pero no
+   aparecen en la tienda hasta que el comerciante les ponga foto y los
+   publique. */
+async function altaProductos(aplicar, boton) {
+  boton.disabled = true;
+  const original = boton.textContent;
+  boton.textContent = aplicar ? 'Creando…' : 'Calculando…';
+  try {
+    const url = aplicar ? '/api/sync/crear?confirmar=si' : '/api/sync/crear';
+    const res = await fetch(url, { method: 'POST' });
+    const data = await res.json();
+
+    if (!res.ok) {
+      banner('err', data.error?.message || 'No se pudo completar la operación.');
+      show(data);
+    } else if (data.simulacion) {
+      const r = data.resumen;
+      $('sync').hidden = false;
+      $('syncResumen').innerHTML = [
+        '<span class="cat-chip">Simulación · alta</span>',
+        `<span class="cat-chip">Se crearían <b>${r.total}</b></span>`,
+        `<span class="cat-chip${r.sinNombre > 0 ? ' alerta' : ''}">Sin nombre <b>${r.sinNombre}</b></span>`,
+        `<span class="cat-chip${r.sinPrecio > 0 ? ' alerta' : ''}">Sin precio <b>${r.sinPrecio}</b></span>`,
+      ].join('');
+      $('syncTablaCaja').hidden = (data.candidatos || []).length === 0;
+      $('syncCuerpo').innerHTML = (data.candidatos || []).map((c) => `<tr>
+          <td class="sku">${escapeHtml(c.sku)}</td>
+          <td>${escapeHtml(c.titulo)}</td>
+          <td class="num">${soles(c.precio)}</td>
+          <td class="num">${c.stock}</td>
+        </tr>`).join('');
+      banner('ok', `Simulación: se crearían ${r.total} productos en borrador. No se ha creado nada.`);
+    } else {
+      const r = data.resultado;
+      banner(
+        r.fallidos > 0 ? 'err' : 'ok',
+        `Creados ${r.creados} productos en borrador.` +
+          (r.fallidos > 0 ? ` ${r.fallidos} fallaron. Motivo: ${r.errores[0]?.mensaje ?? ''}` : ''),
+      );
+      if (r.errores?.length) show(r.errores);
+    }
+  } catch (err) {
+    banner('err', 'Error de red durante el alta de productos.');
+  }
+  boton.disabled = false;
+  boton.textContent = original;
+}
+
+$('btnSimCrear').onclick = (e) => altaProductos(false, e.target);
+
+$('btnCrear').onclick = async (e) => {
+  /* Igual que en la sincronización: se simula primero y se pregunta con el
+     número real delante. */
+  e.target.disabled = true;
+  const original = e.target.textContent;
+  e.target.textContent = 'Calculando…';
+  try {
+    const res = await fetch('/api/sync/crear', { method: 'POST' });
+    const data = await res.json();
+    e.target.disabled = false;
+    e.target.textContent = original;
+
+    if (!res.ok) { banner('err', data.error?.message || 'No se pudo calcular.'); return; }
+    if (data.resumen.total === 0) {
+      banner('ok', 'No hay productos nuevos que crear.');
+      return;
+    }
+    if (!confirm(
+      `Se crearán ${data.resumen.total} productos en tu tienda de Shopify.\n\n` +
+      `Quedarán en BORRADOR: no se publican ni aparecen en la tienda hasta que tú los publiques.\n\n¿Continuar?`
+    )) {
+      banner('ok', 'Cancelado. No se ha creado nada.');
+      return;
+    }
+  } catch (err) {
+    banner('err', 'Error de red al calcular.');
+    e.target.disabled = false;
+    e.target.textContent = original;
+    return;
+  }
+  await altaProductos(true, e.target);
+};
 
 refresh();
 </script>
