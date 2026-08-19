@@ -26,9 +26,16 @@ import {
 } from '../services/sync.service.js';
 import {
   planificarCreacion,
+  anadirCostos,
   crearProductos,
   type ResultadoCreacion,
 } from '../services/create.service.js';
+import {
+  planificarReparacion,
+  anadirCostosReparacion,
+  aplicarReparacion,
+  type ResultadoReparacion,
+} from '../services/repair.service.js';
 import type { ShopifyVariant } from '../integrations/shopify/client.js';
 import { IntegrationError } from '../lib/errors.js';
 import { logger } from '../lib/logger.js';
@@ -244,6 +251,13 @@ export function syncRouter(service: ConnectionService, store: CatalogStore, env:
         });
       }
 
+      // El costo se pide justo antes de crear, y sólo de los candidatos: Bsale
+      // lo da variante por variante, así que pedirlo de todo el catálogo serían
+      // miles de peticiones para nada.
+      const costos = await service.usarBsale(env.BSALE_API_BASE_URL, (bsale) =>
+        anadirCostos(plan, (variantId) => bsale.obtenerCosto(variantId)),
+      );
+
       let resultado: ResultadoCreacion = { creados: 0, fallidos: 0, errores: [], ids: [] };
       await service.usarShopify(
         env.SHOPIFY_SHOP_DOMAIN,
@@ -254,11 +268,79 @@ export function syncRouter(service: ConnectionService, store: CatalogStore, env:
         },
       );
 
-      logger.info({ ...resultado, planificados: plan.candidatos.length }, 'Productos creados en borrador');
+      logger.info(
+        { ...resultado, planificados: plan.candidatos.length, ...costos },
+        'Productos creados en borrador',
+      );
 
-      res.json({ ok: true, simulacion: false, resumen: plan.resumen, resultado });
+      res.json({ ok: true, simulacion: false, resumen: plan.resumen, resultado, costos });
     } catch (error) {
       responderError(res, error, 'No se pudieron crear los productos.');
+    }
+  });
+
+  /**
+   * Corrige productos ya creados con el código de barras o el costo mal.
+   *
+   * Sólo toca lo que lleva la huella del fallo (código de barras idéntico al
+   * SKU) o lo que está vacío. Sin `confirmar=si`, simula.
+   */
+  router.post('/sync/reparar', syncLimiter, async (req: Request, res: Response) => {
+    const aplicar = String(req.query.confirmar) === 'si';
+    const limite = Number(req.query.limite) > 0 ? Number(req.query.limite) : undefined;
+
+    try {
+      const guardados = await store.listar();
+      if (guardados.length === 0) {
+        throw new IntegrationError('No hay catálogo de Bsale leído todavía.', {
+          provider: 'BSALE',
+          retryable: false,
+        });
+      }
+
+      const variantes: ShopifyVariant[] = [];
+      await service.usarShopify(
+        env.SHOPIFY_SHOP_DOMAIN,
+        env.SHOPIFY_API_VERSION,
+        env.SHOPIFY_CLIENT_ID,
+        async (client) => {
+          for await (const v of client.listarVariantes()) variantes.push(v);
+        },
+      );
+
+      const plan = planificarReparacion(guardados, variantes, limite);
+
+      // El costo se consulta siempre —también al simular—, porque si no el
+      // informe diría «voy a poner el costo» sin saber si Bsale tiene alguno.
+      const costos = await service.usarBsale(env.BSALE_API_BASE_URL, (bsale) =>
+        anadirCostosReparacion(plan, (variantId) => bsale.obtenerCosto(variantId)),
+      );
+
+      if (!aplicar) {
+        return res.json({
+          ok: true,
+          simulacion: true,
+          resumen: plan.resumen,
+          costos,
+          reparaciones: plan.reparaciones.slice(0, 200),
+        });
+      }
+
+      let resultado: ResultadoReparacion = { reparados: 0, fallidos: 0, errores: [] };
+      await service.usarShopify(
+        env.SHOPIFY_SHOP_DOMAIN,
+        env.SHOPIFY_API_VERSION,
+        env.SHOPIFY_CLIENT_ID,
+        async (client) => {
+          resultado = await aplicarReparacion(client, plan);
+        },
+      );
+
+      logger.info({ ...resultado, ...plan.resumen }, 'Productos reparados');
+
+      res.json({ ok: true, simulacion: false, resumen: plan.resumen, costos, resultado });
+    } catch (error) {
+      responderError(res, error, 'No se pudieron reparar los productos.');
     }
   });
 

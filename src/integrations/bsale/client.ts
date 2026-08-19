@@ -13,6 +13,7 @@
  */
 import { IntegrationError, backoffDelayMs } from '../../lib/errors.js';
 import { scrubMessage } from '../../lib/mask.js';
+import { logger } from '../../lib/logger.js';
 
 export const BSALE_MAX_LIMIT = 50;
 
@@ -106,6 +107,21 @@ export interface BsaleVariant {
    * nombre del producto; la variante puede no tener descripción ninguna.
    */
   product?: { href?: string; id?: number; name?: string | null } | null;
+}
+
+/**
+ * Costo de una variante. GET /v1/variants/{id}/costs.json
+ *
+ * `averageCost` es el costo promedio ponderado de todas las recepciones. Bsale
+ * lo devuelve como cadena («"4140.0"»), no como número.
+ *
+ * `history` trae el costo de cada recepción. No se usa: para el campo «Costo por
+ * artículo» de Shopify el promedio es lo correcto, y el histórico sólo pesaría
+ * la respuesta.
+ */
+export interface BsaleCosts {
+  averageCost?: string | number | null;
+  history?: Array<{ cost?: number; admissionDate?: number; availableFifo?: number }>;
 }
 
 /** Precio de una variante en una lista. GET /v1/price_lists/{id}/details.json */
@@ -264,6 +280,37 @@ export class BsaleClient {
    */
   listarStock(officeId: number, maxItems?: number): AsyncGenerator<BsaleStock, void, undefined> {
     return this.paginar<BsaleStock>('/stocks.json', { officeid: officeId }, maxItems);
+  }
+
+  /**
+   * Costo promedio de UNA variante.
+   *
+   * ── Por qué esto no se puede pedir en bloque ──────────────────────────────
+   *
+   * Bsale no expone un listado de costos: hay que preguntar variante por
+   * variante. Con 3.238 variantes serían 3.238 peticiones en serie —más de
+   * media hora—, así que **no se llama al leer el catálogo**. Sólo se pide para
+   * los productos que se van a crear o reparar, que son unos cientos.
+   *
+   * Devuelve `null`, sin lanzar, cuando la variante no tiene costo registrado:
+   * un producto que nunca ha entrado por una recepción no lo tiene, y eso es
+   * normal, no un fallo. Que falte el costo no debe impedir crear el producto.
+   */
+  async obtenerCosto(variantId: number): Promise<number | null> {
+    try {
+      const datos = await this.get<BsaleCosts>(`/variants/${variantId}/costs.json`);
+      const bruto = datos?.averageCost;
+      if (bruto === null || bruto === undefined || bruto === '') return null;
+
+      // Bsale lo manda como cadena. Number('') es 0, de ahí el descarte previo.
+      const valor = typeof bruto === 'number' ? bruto : Number(bruto);
+      if (!Number.isFinite(valor) || valor <= 0) return null;
+      return valor;
+    } catch (error) {
+      // Un 404 aquí significa «sin costo», no «algo va mal».
+      logger.debug({ variantId, err: (error as Error).message }, 'Sin costo en Bsale');
+      return null;
+    }
   }
 
   // ── Transporte ─────────────────────────────────────────────────────────────

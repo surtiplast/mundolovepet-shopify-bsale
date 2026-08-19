@@ -24,3 +24,6 @@ Thumbs.db
 
 .idea
 .vscode
+
+# Ficheros temporales que genera vitest al arrancar
+vitest.config.ts.timestamp-*

@@ -20,9 +20,19 @@ import { normalizarSku } from './catalog.service.js';
 
 export interface CandidatoCreacion {
   sku: string;
+  /** El EAN de Bsale. Campo distinto del SKU; `null` si la variante no tiene. */
+  barcode: string | null;
   titulo: string;
   precio: number;
   stock: number | null;
+  /** Necesario para pedir el costo: Bsale sólo lo da por id de variante. */
+  bsaleVariantId: number | null;
+  /**
+   * Costo promedio de Bsale. `null` mientras no se haya consultado, y también
+   * cuando la variante no tiene costo registrado —producto que nunca entró por
+   * una recepción—. En ambos casos el producto se crea igual, sin costo.
+   */
+  costo: number | null;
 }
 
 export interface PlanCreacion {
@@ -80,8 +90,12 @@ export function planificarCreacion(
 
     candidatos.push({
       sku: p.sku,
+      barcode: p.barcode?.trim() || null,
       titulo,
       precio: p.bsalePrice,
+      bsaleVariantId: p.bsaleVariantId,
+      // Se rellena después, con `anadirCostos`. Planificar no llama a Bsale.
+      costo: null,
       // Un stock nulo se trata como cero: el producto nace agotado, que es lo
       // honesto cuando no sabemos cuántos hay.
       stock: p.bsaleStock ?? 0,
@@ -97,6 +111,40 @@ export function planificarCreacion(
       sinPrecio: omitidos.filter((o) => o.motivo.includes('precio')).length,
     },
   };
+}
+
+/**
+ * Consulta en Bsale el costo de cada candidato y lo añade al plan.
+ *
+ * ── Por qué es un paso aparte ────────────────────────────────────────────────
+ *
+ * Bsale sólo da el costo variante por variante: son tantas peticiones como
+ * candidatos. Separarlo de `planificarCreacion` mantiene la planificación
+ * instantánea y sin red, que es lo que permite simular sin esperas.
+ *
+ * Un costo que no se puede leer no detiene nada: el producto se crea sin él.
+ * El costo es informativo para los márgenes; el precio, el stock y el código
+ * son los que no pueden faltar.
+ */
+export async function anadirCostos(
+  plan: PlanCreacion,
+  obtenerCosto: (variantId: number) => Promise<number | null>,
+): Promise<{ conCosto: number; sinCosto: number }> {
+  let conCosto = 0;
+  let sinCosto = 0;
+
+  for (const c of plan.candidatos) {
+    if (c.bsaleVariantId === null || c.bsaleVariantId <= 0) {
+      sinCosto++;
+      continue;
+    }
+    const costo = await obtenerCosto(c.bsaleVariantId);
+    c.costo = costo;
+    if (costo === null) sinCosto++;
+    else conCosto++;
+  }
+
+  return { conCosto, sinCosto };
 }
 
 /**
@@ -117,7 +165,9 @@ export async function crearProductos(
     const producto: ProductoNuevo = {
       titulo: c.titulo,
       sku: c.sku,
+      barcode: c.barcode,
       precio: c.precio,
+      costo: c.costo,
       stock: c.stock,
       locationId,
     };

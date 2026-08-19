@@ -29,6 +29,15 @@ export interface ItemCatalogo {
   bsaleProductId: number | null;
   /** El SKU tal cual viene de Bsale, ya recortado. Cadena vacía si no tiene. */
   sku: string;
+  /**
+   * El código de barras de Bsale, que es un campo DISTINTO del SKU.
+   *
+   * En Mundo Love Pet conviven los dos: el SKU es un código interno de 14
+   * dígitos y el código de barras es el EAN del fabricante. Copiar el SKU al
+   * campo de código de barras de Shopify —como se hacía antes— destruía el EAN
+   * real y rompía los lectores de tienda.
+   */
+  barcode: string | null;
   nombre: string | null;
   /** Precio con impuestos incluidos. `null` si la variante no está en la lista. */
   precio: number | null;
@@ -127,6 +136,7 @@ export async function leerCatalogo(
       bsaleVariantId: v.id,
       bsaleProductId: v.product?.id ?? null,
       sku: skuCrudo,
+      barcode: v.barCode?.trim() || null,
       // El nombre de la VARIANTE suele venir vacío; el comercial está en el
       // producto. Se prefiere la variante cuando existe («Talla M») y se cae al
       // producto cuando no, que es el caso mayoritario.

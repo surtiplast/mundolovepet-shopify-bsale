@@ -168,6 +168,44 @@ describe('leerCatalogo', () => {
     });
   });
 
+  /**
+   * En Bsale una variante tiene `code` (el SKU interno) y `barCode` (el EAN del
+   * fabricante). Son valores distintos y hay que leer los dos: durante un tiempo
+   * la app ignoraba `barCode` y copiaba el SKU en su lugar, destruyendo el EAN
+   * real al crear el producto en Shopify.
+   */
+  describe('código de barras', () => {
+    it('lee el código de barras de Bsale, que no es el SKU', async () => {
+      const fetchMock = fakeFetch({
+        '/variants.json': [
+          {
+            href: '',
+            id: 1,
+            code: '74352029961567',
+            barCode: '8595602559152',
+            description: 'SENSITIVE VENISON 1KG',
+            product: { id: 9, name: 'BRIT CARE GRAIN FREE' },
+          },
+        ],
+      });
+      const client = makeClient(fetchMock as unknown as typeof fetch);
+
+      const { items } = await leerCatalogo(client, { priceListId: 4, officeId: 1 });
+
+      expect(items[0]!.sku).toBe('74352029961567');
+      expect(items[0]!.barcode).toBe('8595602559152');
+    });
+
+    it('deja el código de barras vacío si la variante no tiene, sin copiar el SKU', async () => {
+      const fetchMock = fakeFetch({ '/variants.json': [variante(1, 'A-1')] });
+      const client = makeClient(fetchMock as unknown as typeof fetch);
+
+      const { items } = await leerCatalogo(client, { priceListId: 4, officeId: 1 });
+
+      expect(items[0]!.barcode).toBeNull();
+    });
+  });
+
   describe('diagnóstico', () => {
     it('marca las variantes sin SKU', async () => {
       const fetchMock = fakeFetch({

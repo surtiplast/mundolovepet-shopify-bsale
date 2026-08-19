@@ -132,6 +132,8 @@
     <button id="btnAplicarPrecio" class="peligro">Actualizar precios en Shopify</button>
     <button id="btnSimCrear">Simular alta de productos</button>
     <button id="btnCrear" class="peligro">Crear productos en Shopify (borrador)</button>
+    <button id="btnSimReparar">Simular reparación</button>
+    <button id="btnReparar" class="peligro">Reparar código de barras y costo</button>
   </div>
 
   <section class="grid" id="cards"></section>
@@ -713,7 +715,7 @@ async function altaProductos(aplicar, boton) {
       ].join('');
       $('syncTablaCaja').hidden = (data.candidatos || []).length === 0;
       $('syncCuerpo').innerHTML = (data.candidatos || []).map((c) => `<tr>
-          <td class="sku">${escapeHtml(c.sku)}</td>
+          <td class="sku">${escapeHtml(c.sku)}${c.barcode ? `<br><small>EAN ${escapeHtml(c.barcode)}</small>` : ''}</td>
           <td>${escapeHtml(c.titulo)}</td>
           <td class="num">${soles(c.precio)}</td>
           <td class="num">${c.stock}</td>
@@ -768,6 +770,96 @@ $('btnCrear').onclick = async (e) => {
     return;
   }
   await altaProductos(true, e.target);
+};
+
+/* ── Reparación de productos ya creados ──────────────────────────────────────
+   Arregla dos cosas de los productos que la app creó antes: el código de barras
+   (al que se copiaba el SKU por error) y el costo (que nunca se enviaba).
+
+   Sólo toca lo que lleva la huella del fallo. Un código de barras distinto del
+   SKU se respeta siempre, porque lo habrá puesto alguien a mano. */
+async function repararProductos(aplicar, boton) {
+  boton.disabled = true;
+  const original = boton.textContent;
+  boton.textContent = aplicar ? 'Reparando…' : 'Revisando…';
+  try {
+    const url = aplicar ? '/api/sync/reparar?confirmar=si' : '/api/sync/reparar';
+    const res = await fetch(url, { method: 'POST' });
+    const data = await res.json();
+
+    if (!res.ok) {
+      banner('err', data.error?.message || 'No se pudo completar la reparación.');
+      show(data);
+    } else if (data.simulacion) {
+      const r = data.resumen;
+      $('sync').hidden = false;
+      $('syncResumen').innerHTML = [
+        '<span class="cat-chip">Simulación · reparación</span>',
+        `<span class="cat-chip">Revisados <b>${r.revisados}</b></span>`,
+        `<span class="cat-chip${r.total > 0 ? ' alerta' : ''}">Se corregirían <b>${r.total}</b></span>`,
+        `<span class="cat-chip">Código de barras <b>${r.codigoDeBarras}</b></span>`,
+        `<span class="cat-chip">Costo <b>${r.costo}</b></span>`,
+      ].join('');
+      const filas = data.reparaciones || [];
+      $('syncTablaCaja').hidden = filas.length === 0;
+      $('syncCuerpo').innerHTML = filas.map((f) => `<tr>
+          <td class="sku">${escapeHtml(f.sku)}</td>
+          <td>${f.barcode ? `código de barras → <b>${escapeHtml(f.barcode)}</b>` : ''}${f.barcode && f.costo !== undefined ? '<br>' : ''}${f.costo !== undefined ? `costo → <b>${soles(f.costo)}</b>` : ''}</td>
+          <td class="num">${f.barcodeAnterior ? escapeHtml(f.barcodeAnterior) : '—'}</td>
+          <td class="num">${f.barcode ? escapeHtml(f.barcode) : '—'}</td>
+        </tr>`).join('');
+      banner('ok', `Simulación: se corregirían ${r.total} productos. No se ha cambiado nada.`);
+    } else {
+      const r = data.resultado;
+      banner(
+        r.fallidos > 0 ? 'err' : 'ok',
+        `Reparados ${r.reparados} productos.` +
+          (r.fallidos > 0 ? ` ${r.fallidos} fallaron. Motivo: ${r.errores[0]?.mensaje ?? ''}` : ''),
+      );
+      if (r.errores?.length) show(r.errores);
+    }
+  } catch (err) {
+    banner('err', 'Error de red durante la reparación.');
+  }
+  boton.disabled = false;
+  boton.textContent = original;
+}
+
+$('btnSimReparar').onclick = (e) => repararProductos(false, e.target);
+
+$('btnReparar').onclick = async (e) => {
+  /* Se simula primero y se pregunta con el número delante, igual que el resto
+     de acciones que escriben en la tienda. */
+  e.target.disabled = true;
+  const original = e.target.textContent;
+  e.target.textContent = 'Revisando…';
+  try {
+    const res = await fetch('/api/sync/reparar', { method: 'POST' });
+    const data = await res.json();
+    e.target.disabled = false;
+    e.target.textContent = original;
+
+    if (!res.ok) { banner('err', data.error?.message || 'No se pudo revisar.'); return; }
+    if (data.resumen.total === 0) {
+      banner('ok', 'No hay nada que reparar.');
+      return;
+    }
+    if (!confirm(
+      `Se corregirán ${data.resumen.total} productos en tu tienda:\n\n` +
+      `· Código de barras: ${data.resumen.codigoDeBarras}\n` +
+      `· Costo por artículo: ${data.resumen.costo}\n\n` +
+      `Sólo se toca el código de barras cuando ahora mismo es idéntico al SKU, y el costo cuando está vacío.\n\n¿Continuar?`
+    )) {
+      banner('ok', 'Cancelado. No se ha cambiado nada.');
+      return;
+    }
+  } catch (err) {
+    banner('err', 'Error de red al revisar.');
+    e.target.disabled = false;
+    e.target.textContent = original;
+    return;
+  }
+  await repararProductos(true, e.target);
 };
 
 refresh();

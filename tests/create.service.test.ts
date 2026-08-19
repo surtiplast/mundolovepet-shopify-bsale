@@ -6,12 +6,17 @@
  * sin que nadie lo revise.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { planificarCreacion, crearProductos } from '../src/services/create.service.js';
+import {
+  planificarCreacion,
+  anadirCostos,
+  crearProductos,
+} from '../src/services/create.service.js';
 import type { ProductoGuardado } from '../src/db/catalog.store.js';
 
 function prod(over: Partial<ProductoGuardado> = {}): ProductoGuardado {
   return {
     sku: 'A-1',
+    barcode: '8595602559152',
     bsaleVariantId: 1,
     bsaleProductId: 9,
     name: 'Producto de prueba',
@@ -112,9 +117,96 @@ describe('crearProductos', () => {
     expect(client.crearProductoBorrador).toHaveBeenCalledWith({
       titulo: 'Collar rojo',
       sku: 'A-9',
+      barcode: '8595602559152',
       precio: 19.9,
+      // `null` porque nadie ha llamado a `anadirCostos`: planificar no toca Bsale.
+      costo: null,
       stock: 3,
       locationId: 'gid://loc/7',
+    });
+  });
+
+  /**
+   * El costo llega de una consulta aparte porque Bsale sólo lo da variante por
+   * variante. Sin él el producto se crea igual: un costo ausente es un dato
+   * informativo que falta, no un producto mal creado.
+   */
+  describe('costo', () => {
+    it('manda el costo consultado en Bsale', async () => {
+      const client = clienteFalso();
+      const plan = planificarCreacion([prod({ sku: 'X', bsaleVariantId: 77 })], ['X']);
+      await anadirCostos(plan, async () => 63.4);
+
+      await crearProductos(client as never, plan, 'gid://loc/1');
+
+      const enviado = client.crearProductoBorrador.mock.calls[0]![0] as { costo: number | null };
+      expect(enviado.costo).toBe(63.4);
+    });
+
+    it('pide el costo por el id de variante de Bsale', async () => {
+      const obtener = vi.fn(async () => 10);
+      const plan = planificarCreacion([prod({ sku: 'X', bsaleVariantId: 4242 })], ['X']);
+
+      await anadirCostos(plan, obtener);
+
+      expect(obtener).toHaveBeenCalledWith(4242);
+    });
+
+    it('un producto sin costo en Bsale se crea igualmente, sin costo', async () => {
+      const client = clienteFalso();
+      const plan = planificarCreacion([prod({ sku: 'X' })], ['X']);
+      const r = await anadirCostos(plan, async () => null);
+
+      await crearProductos(client as never, plan, 'gid://loc/1');
+
+      expect(r.sinCosto).toBe(1);
+      const enviado = client.crearProductoBorrador.mock.calls[0]![0] as { costo: number | null };
+      expect(enviado.costo).toBeNull();
+    });
+
+    it('planificar no consulta el costo: la simulación debe ser instantánea', () => {
+      const plan = planificarCreacion([prod({ sku: 'X' })], ['X']);
+      expect(plan.candidatos[0]!.costo).toBeNull();
+    });
+  });
+
+  /**
+   * El fallo que motivó estas pruebas: la versión anterior mandaba
+   * `barcode: sku`. En Bsale son dos campos distintos —SKU 74352029961567 y
+   * EAN 8595602559152— y copiar uno sobre otro borraba el EAN del fabricante.
+   */
+  describe('el código de barras nunca es el SKU', () => {
+    it('manda el código de barras de Bsale, no el SKU', async () => {
+      const client = clienteFalso();
+      const plan = planificarCreacion(
+        [prod({ sku: '74352029961567', barcode: '8595602559152' })],
+        ['74352029961567'],
+      );
+
+      await crearProductos(client as never, plan, 'gid://loc/1');
+
+      const enviado = client.crearProductoBorrador.mock.calls[0]![0] as {
+        sku: string;
+        barcode: string | null;
+      };
+      expect(enviado.sku).toBe('74352029961567');
+      expect(enviado.barcode).toBe('8595602559152');
+      expect(enviado.barcode).not.toBe(enviado.sku);
+    });
+
+    it('si Bsale no tiene código de barras se manda vacío, no el SKU', async () => {
+      const client = clienteFalso();
+      const plan = planificarCreacion([prod({ sku: 'X-1', barcode: null })], ['X-1']);
+
+      await crearProductos(client as never, plan, 'gid://loc/1');
+
+      const enviado = client.crearProductoBorrador.mock.calls[0]![0] as { barcode: string | null };
+      expect(enviado.barcode).toBeNull();
+    });
+
+    it('un código de barras en blanco cuenta como ausente', () => {
+      const plan = planificarCreacion([prod({ sku: 'X-1', barcode: '   ' })], ['X-1']);
+      expect(plan.candidatos[0]!.barcode).toBeNull();
     });
   });
 

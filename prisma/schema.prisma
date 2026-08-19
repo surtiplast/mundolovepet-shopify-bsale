@@ -116,6 +116,9 @@ model ProductMap {
   id                      String    @id @default(cuid())
   /// Regla del proyecto: Bsale SKU == Shopify SKU
   sku                     String    @unique
+  /// Código de barras del fabricante (EAN/UPC). Es un campo DISTINTO del SKU:
+  /// en Bsale conviven los dos y confundirlos destruye el EAN real.
+  barcode                 String?
   bsaleVariantId          Int?
   bsaleProductId          Int?
   shopifyVariantGid       String?

@@ -75,6 +75,7 @@ export function catalogRouter(
       const guardados = await store.guardar(
         items.map((i: ItemCatalogo) => ({
           sku: i.sku,
+          barcode: i.barcode,
           bsaleVariantId: i.bsaleVariantId,
           bsaleProductId: i.bsaleProductId,
           name: i.nombre,

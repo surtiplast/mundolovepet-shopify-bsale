@@ -86,6 +86,8 @@ export interface ShopifyVariant {
   price: string | null;
   inventoryQuantity: number | null;
   inventoryItemId: string | null;
+  /** «Costo por artículo». `null` cuando la tienda no lo tiene puesto. */
+  costo: number | null;
   productId: string | null;
   productTitle: string | null;
   title: string | null;
@@ -138,6 +140,11 @@ const VARIANTS_QUERY = /* GraphQL */ `
         inventoryQuantity
         inventoryItem {
           id
+          # El costo actual, para saber si falta. Shopify lo llama unitCost y lo
+          # devuelve como MoneyV2, no como número suelto.
+          unitCost {
+            amount
+          }
         }
         title
         product {
@@ -162,6 +169,28 @@ const PRECIO_MUTATION = /* GraphQL */ `
       productVariants {
         id
         price
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+/**
+ * Corrección de código de barras y costo.
+ *
+ * Reutiliza `productVariantsBulkUpdate` —igual que el precio— porque
+ * `ProductVariantsBulkInput` admite tanto `barcode` como `inventoryItem.cost`,
+ * y así una sola llamada arregla los dos campos a la vez.
+ */
+const REPARAR_MUTATION = /* GraphQL */ `
+  mutation Reparar($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+    productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+      productVariants {
+        id
+        barcode
       }
       userErrors {
         field
@@ -260,8 +289,21 @@ const CREAR_PRODUCTO_MUTATION = /* GraphQL */ `
 export interface ProductoNuevo {
   titulo: string;
   sku: string;
+  /**
+   * Código de barras del fabricante, tal como está en Bsale. **Nunca el SKU.**
+   *
+   * `null` cuando la variante de Bsale no tiene ninguno, y en ese caso el campo
+   * se omite en la mutación: mejor vacío que con un valor inventado.
+   */
+  barcode: string | null;
   /** Precio con IGV. */
   precio: number;
+  /**
+   * Costo promedio de Bsale, para el campo «Costo por artículo» de Shopify.
+   * `null` cuando Bsale no tiene costo registrado; entonces se omite en vez de
+   * mandar cero, porque un cero declara un margen del 100 % que es mentira.
+   */
+  costo: number | null;
   /** Stock inicial. Puede ser cero: el producto se crea agotado, que es correcto. */
   stock: number | null;
   locationId: string;
@@ -390,7 +432,7 @@ export class ShopifyClient {
             barcode: string | null;
             price: string | null;
             inventoryQuantity: number | null;
-            inventoryItem: { id: string } | null;
+            inventoryItem: { id: string; unitCost: { amount: string } | null } | null;
             title: string | null;
             product: { id: string; title: string } | null;
           }>;
@@ -405,6 +447,9 @@ export class ShopifyClient {
           price: n.price,
           inventoryQuantity: n.inventoryQuantity,
           inventoryItemId: n.inventoryItem?.id ?? null,
+          costo: n.inventoryItem?.unitCost?.amount == null
+            ? null
+            : Number(n.inventoryItem.unitCost.amount),
           productId: n.product?.id ?? null,
           productTitle: n.product?.title ?? null,
           title: n.title,
@@ -440,6 +485,38 @@ export class ShopifyClient {
     }>(PRECIO_MUTATION, {
       productId,
       variants: cambios.map((c) => ({ id: c.variantId, price: c.precio })),
+    });
+
+    const errores = (data.productVariantsBulkUpdate?.userErrors ?? []).map(
+      (e) => `${(e.field ?? []).join('.')}: ${e.message}`,
+    );
+    return { ok: errores.length === 0, errores };
+  }
+
+  /**
+   * Corrige el código de barras y/o el costo de varias variantes de un producto.
+   *
+   * Cada campo se manda sólo si viene: así se puede arreglar el código de barras
+   * sin tocar el costo, o al revés, sin borrar sin querer el que ya estaba.
+   */
+  async repararVariantes(
+    productId: string,
+    cambios: Array<{ variantId: string; barcode?: string; costo?: number }>,
+  ): Promise<ResultadoEscritura> {
+    if (cambios.length === 0) return { ok: true, errores: [] };
+
+    const data = await this.query<{
+      productVariantsBulkUpdate: {
+        productVariants: Array<{ id: string; barcode: string | null }> | null;
+        userErrors: Array<{ field: string[] | null; message: string }>;
+      };
+    }>(REPARAR_MUTATION, {
+      productId,
+      variants: cambios.map((c) => ({
+        id: c.variantId,
+        ...(c.barcode === undefined ? {} : { barcode: c.barcode }),
+        ...(c.costo === undefined ? {} : { inventoryItem: { cost: c.costo } }),
+      })),
     });
 
     const errores = (data.productVariantsBulkUpdate?.userErrors ?? []).map(
@@ -504,11 +581,16 @@ export class ShopifyClient {
    * automáticamente es el tipo de opción que alguien activa «un momento para
    * probar» y se olvida.
    *
-   * ── El código va en `sku` Y en `barcode` ─────────────────────────────────
+   * ── El SKU y el código de barras son campos DISTINTOS ────────────────────
    *
-   * En Mundo Love Pet los códigos de Bsale son EAN de 14 dígitos. En `sku`
-   * porque es lo que usa el emparejamiento; en `barcode` porque eso es lo que
-   * son y sirve para lectores de tienda y para Google Shopping.
+   * Una versión anterior copiaba el SKU al campo `barcode` de Shopify dando por
+   * hecho que en Bsale había un único código. No es así: una variante de Bsale
+   * tiene `code` (el SKU interno) y `barCode` (el EAN del fabricante), y son
+   * valores distintos —p. ej. SKU 74352029961567 y EAN 8595602559152—. Copiar
+   * uno sobre el otro destruía el EAN real, que es justo el que leen los
+   * lectores de tienda y el que usa Google Shopping.
+   *
+   * Ahora `barcode` se manda sólo si Bsale tiene uno, y si no se omite.
    */
   async crearProductoBorrador(p: ProductoNuevo): Promise<ResultadoCreacion> {
     const data = await this.query<{
@@ -528,10 +610,10 @@ export class ShopifyClient {
             optionValues: [{ optionName: 'Title', name: 'Default Title' }],
             price: p.precio,
             sku: p.sku,
-            barcode: p.sku,
+            ...(p.barcode ? { barcode: p.barcode } : {}),
             // Sin `tracked: true` Shopify no lleva la cuenta del inventario y
             // el producto se podría vender sin límite.
-            inventoryItem: { tracked: true },
+            inventoryItem: { tracked: true, ...(p.costo === null ? {} : { cost: p.costo }) },
             ...(p.stock === null
               ? {}
               : {

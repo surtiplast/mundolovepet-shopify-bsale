@@ -15,6 +15,8 @@
 
 export interface ProductoGuardado {
   sku: string;
+  /** Campo distinto del SKU. Ver el comentario en `ItemCatalogo`. */
+  barcode: string | null;
   bsaleVariantId: number | null;
   bsaleProductId: number | null;
   name: string | null;
@@ -49,6 +51,7 @@ export class InMemoryCatalogStore implements CatalogStore {
 
 interface ProductMapRow {
   sku: string;
+  barcode: string | null;
   bsaleVariantId: number | null;
   bsaleProductId: number | null;
   name: string | null;
@@ -82,6 +85,7 @@ export class PrismaCatalogStore implements CatalogStore {
       if (!item.sku.trim()) continue;
 
       const datos = {
+        barcode: item.barcode,
         bsaleVariantId: item.bsaleVariantId,
         bsaleProductId: item.bsaleProductId,
         name: item.name,
@@ -104,6 +108,7 @@ export class PrismaCatalogStore implements CatalogStore {
     const filas = await this.prisma.productMap.findMany({ orderBy: { sku: 'asc' } });
     return filas.map((f) => ({
       sku: f.sku,
+      barcode: f.barcode,
       bsaleVariantId: f.bsaleVariantId,
       bsaleProductId: f.bsaleProductId,
       name: f.name,
