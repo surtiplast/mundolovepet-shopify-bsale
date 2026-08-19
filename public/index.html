@@ -134,9 +134,26 @@
     <button id="btnCrear" class="peligro">Crear productos en Shopify (borrador)</button>
     <button id="btnSimReparar">Simular reparación</button>
     <button id="btnReparar" class="peligro">Reparar código de barras y costo</button>
+    <button id="btnPedidos">Ver pedidos por facturar</button>
   </div>
 
   <section class="grid" id="cards"></section>
+
+  <section id="pedidos" hidden>
+    <h2 class="cat-titulo">Pedidos por facturar</h2>
+    <div id="pedResumen" class="cat-resumen"></div>
+    <div class="cat-tabla-scroll">
+      <table class="cat-tabla">
+        <thead>
+          <tr>
+            <th>Pedido</th><th>Cliente</th><th>DNI / RUC</th>
+            <th>Comprobante</th><th class="num">Total</th><th>Acción</th>
+          </tr>
+        </thead>
+        <tbody id="pedCuerpo"></tbody>
+      </table>
+    </div>
+  </section>
 
   <section id="sync" hidden>
     <h2 class="cat-titulo">Sincronización</h2>
@@ -861,6 +878,107 @@ $('btnReparar').onclick = async (e) => {
   }
   await repararProductos(true, e.target);
 };
+
+/* ── Pedidos y emisión de comprobantes ───────────────────────────────────────
+   Cada fila trae ya calculado qué se emitiría y por cuánto. El botón «Emitir»
+   sólo aparece en los que están listos; los que necesitan revisión muestran el
+   motivo en su lugar.
+
+   La emisión declara ante SUNAT y no se deshace, así que va de uno en uno y con
+   una confirmación que dice el número exacto. */
+function chipComprobante(p) {
+  if (!p.puedeEmitirse) return '<span class="cat-chip alerta">Revisar</span>';
+  return `<span class="cat-chip">${p.comprobante === 'FACTURA' ? 'Factura' : 'Boleta'}</span>`;
+}
+
+async function verPedidos(boton) {
+  boton.disabled = true;
+  const original = boton.textContent;
+  boton.textContent = 'Leyendo…';
+  try {
+    const res = await fetch('/api/pedidos?limite=50');
+    const data = await res.json();
+
+    if (!res.ok) {
+      banner('err', data.error?.message || 'No se pudieron leer los pedidos.');
+      show(data);
+    } else {
+      const r = data.resumen;
+      $('pedidos').hidden = false;
+      $('pedResumen').innerHTML = [
+        `<span class="cat-chip">Pedidos <b>${data.total}</b></span>`,
+        `<span class="cat-chip">Boletas <b>${r.boletas}</b></span>`,
+        `<span class="cat-chip">Facturas <b>${r.facturas}</b></span>`,
+        `<span class="cat-chip${r.revisar > 0 ? ' alerta' : ''}">A revisar <b>${r.revisar}</b></span>`,
+      ].join('');
+
+      $('pedCuerpo').innerHTML = (data.pedidos || []).map((p) => {
+        const accion = p.puedeEmitirse
+          ? `<button class="peligro" data-emitir="${escapeHtml(p.id)}" data-nombre="${escapeHtml(p.nombre)}">Emitir</button>`
+          : `<small>${escapeHtml((p.motivos[0] || p.motivoDecision || '').slice(0, 120))}</small>`;
+
+        return `<tr>
+          <td class="sku">${escapeHtml(p.nombre)}<br><small>${new Date(p.fecha).toLocaleDateString('es-PE')}</small></td>
+          <td>${escapeHtml(p.cliente || '—')}</td>
+          <td class="sku">${p.identificacion.numero ? escapeHtml(p.identificacion.numero) : '—'}${p.identificacion.razonSocial ? `<br><small>${escapeHtml(p.identificacion.razonSocial)}</small>` : ''}</td>
+          <td>${chipComprobante(p)}</td>
+          <td class="num">${soles(p.resumen.total)}<br><small>neto ${soles(p.resumen.neto)}</small></td>
+          <td>${accion}</td>
+        </tr>`;
+      }).join('');
+
+      for (const b of $('pedCuerpo').querySelectorAll('[data-emitir]')) {
+        b.onclick = () => emitirComprobante(b.dataset.emitir, b.dataset.nombre, b);
+      }
+
+      banner('ok', `${data.total} pedidos leídos. ${r.revisar} necesitan revisión.`);
+    }
+  } catch (err) {
+    banner('err', 'Error de red al leer los pedidos.');
+  }
+  boton.disabled = false;
+  boton.textContent = original;
+}
+
+async function emitirComprobante(id, nombre, boton) {
+  if (!confirm(
+    `Se va a emitir el comprobante del pedido ${nombre}.\n\n` +
+    `Esto lo DECLARA ante SUNAT y no se puede deshacer: para corregirlo habría ` +
+    `que anularlo con otro documento.\n\n¿Emitir?`
+  )) return;
+
+  boton.disabled = true;
+  const original = boton.textContent;
+  boton.textContent = 'Emitiendo…';
+  try {
+    const res = await fetch(`/api/pedidos/${encodeURIComponent(id)}/emitir?confirmar=si`, { method: 'POST' });
+    const data = await res.json();
+
+    if (!res.ok) {
+      banner('err', data.error?.message || 'No se pudo emitir.');
+      boton.disabled = false;
+      boton.textContent = original;
+      return;
+    }
+
+    const d = data.documento;
+    // `sunat`: 0 aceptado, 1 enviado, 2 rechazado.
+    const rechazado = d.sunat === 2;
+    banner(
+      rechazado ? 'err' : 'ok',
+      `${data.comprobante === 'FACTURA' ? 'Factura' : 'Boleta'} ${d.serie || d.numero} emitida.` +
+        (d.mensajeSunat ? ` SUNAT: ${d.mensajeSunat}` : ''),
+    );
+
+    boton.outerHTML = `<span class="cat-chip">${escapeHtml(d.serie || String(d.numero))}</span>`;
+  } catch (err) {
+    banner('err', 'Error de red al emitir.');
+    boton.disabled = false;
+    boton.textContent = original;
+  }
+}
+
+$('btnPedidos').onclick = (e) => verPedidos(e.target);
 
 refresh();
 </script>

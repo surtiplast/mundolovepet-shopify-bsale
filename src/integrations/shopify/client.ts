@@ -286,6 +286,326 @@ const CREAR_PRODUCTO_MUTATION = /* GraphQL */ `
   }
 `;
 
+/**
+ * Pedidos pagados, con todo lo que hace falta para facturar.
+ *
+ * ── Por qué se piden estos campos y no otros ─────────────────────────────────
+ *
+ * `billingAddress.company` y `shippingAddress.company` son el campo «Empresa»
+ * del checkout, que es donde Mundo Love Pet captura el DNI o el RUC. Se piden
+ * los dos porque el cliente puede rellenar cualquiera de ellos.
+ *
+ * `discountedUnitPriceSet` es el precio unitario DESPUÉS de los descuentos de
+ * línea. Bsale quiere el descuento como porcentaje aparte, así que hace falta
+ * también `originalUnitPriceSet` para calcularlo.
+ *
+ * `taxesIncluded` decide todo el cálculo: en Perú los precios de la tienda
+ * llevan el IGV dentro, y Bsale quiere el valor SIN impuesto. Sin este dato no
+ * se puede saber si hay que dividir entre 1,18 o no.
+ */
+const PEDIDOS_QUERY = /* GraphQL */ `
+  query Pedidos($first: Int!, $after: String, $query: String) {
+    orders(first: $first, after: $after, query: $query, sortKey: CREATED_AT, reverse: true) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      nodes {
+        id
+        legacyResourceId
+        name
+        createdAt
+        processedAt
+        displayFinancialStatus
+        displayFulfillmentStatus
+        taxesIncluded
+        currencyCode
+        note
+        email
+        customer {
+          id
+          firstName
+          lastName
+          email
+        }
+        billingAddress {
+          company
+          address1
+          address2
+          city
+          province
+          countryCode
+          phone
+        }
+        shippingAddress {
+          company
+          address1
+          address2
+          city
+          province
+          countryCode
+          phone
+        }
+        totalPriceSet {
+          shopMoney {
+            amount
+          }
+        }
+        totalShippingPriceSet {
+          shopMoney {
+            amount
+          }
+        }
+        totalTaxSet {
+          shopMoney {
+            amount
+          }
+        }
+        lineItems(first: 100) {
+          nodes {
+            id
+            title
+            quantity
+            sku
+            variant {
+              id
+            }
+            originalUnitPriceSet {
+              shopMoney {
+                amount
+              }
+            }
+            discountedUnitPriceSet {
+              shopMoney {
+                amount
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+/**
+ * Un pedido concreto por su id.
+ *
+ * Se relee de aquí antes de emitir en vez de fiarse del payload guardado: entre
+ * que llegó el pedido y se factura, alguien pudo cancelarlo o reembolsarlo.
+ */
+const PEDIDO_QUERY = /* GraphQL */ `
+  query Pedido($id: ID!) {
+    order(id: $id) {
+      id
+      legacyResourceId
+      name
+      createdAt
+      processedAt
+      displayFinancialStatus
+      displayFulfillmentStatus
+      taxesIncluded
+      currencyCode
+      note
+      email
+      customer {
+        id
+        firstName
+        lastName
+        email
+      }
+      billingAddress {
+        company
+        address1
+        address2
+        city
+        province
+        countryCode
+        phone
+      }
+      shippingAddress {
+        company
+        address1
+        address2
+        city
+        province
+        countryCode
+        phone
+      }
+      totalPriceSet {
+        shopMoney {
+          amount
+        }
+      }
+      totalShippingPriceSet {
+        shopMoney {
+          amount
+        }
+      }
+      totalTaxSet {
+        shopMoney {
+          amount
+        }
+      }
+      lineItems(first: 100) {
+        nodes {
+          id
+          title
+          quantity
+          sku
+          variant {
+            id
+          }
+          originalUnitPriceSet {
+            shopMoney {
+              amount
+            }
+          }
+          discountedUnitPriceSet {
+            shopMoney {
+              amount
+            }
+          }
+        }
+      }
+    }
+  }
+`;
+
+export interface LineaPedido {
+  id: string;
+  titulo: string;
+  cantidad: number;
+  sku: string | null;
+  /** Precio unitario de lista, con IGV si la tienda lo incluye. */
+  precioOriginal: number;
+  /** Precio unitario tras descuentos de línea. */
+  precioConDescuento: number;
+}
+
+export interface PedidoShopify {
+  id: string;
+  /** El id numérico. `OrderSync.shopifyOrderId` lo guarda como BigInt. */
+  legacyId: string;
+  nombre: string;
+  creadoEl: string;
+  estadoPago: string;
+  estadoEnvio: string;
+  /** Si los precios de la tienda ya llevan el IGV dentro. En Perú, sí. */
+  impuestosIncluidos: boolean;
+  moneda: string;
+  email: string | null;
+  cliente: { id: string; nombre: string | null; email: string | null } | null;
+  /** El campo «Empresa» del checkout: aquí viene el DNI o el RUC. */
+  empresa: string | null;
+  direccion: {
+    linea1: string | null;
+    linea2: string | null;
+    ciudad: string | null;
+    provincia: string | null;
+    pais: string | null;
+    telefono: string | null;
+  };
+  total: number;
+  envio: number;
+  impuestos: number;
+  lineas: LineaPedido[];
+}
+
+/** La forma cruda que devuelve GraphQL, antes de normalizarla. */
+interface RawPedido {
+  id: string;
+  legacyResourceId: string;
+  name: string;
+  createdAt: string;
+  processedAt: string | null;
+  displayFinancialStatus: string | null;
+  displayFulfillmentStatus: string | null;
+  taxesIncluded: boolean;
+  currencyCode: string;
+  note: string | null;
+  email: string | null;
+  customer: { id: string; firstName: string | null; lastName: string | null; email: string | null } | null;
+  billingAddress: RawDireccion | null;
+  shippingAddress: RawDireccion | null;
+  totalPriceSet: { shopMoney: { amount: string } } | null;
+  totalShippingPriceSet: { shopMoney: { amount: string } } | null;
+  totalTaxSet: { shopMoney: { amount: string } } | null;
+  lineItems: {
+    nodes: Array<{
+      id: string;
+      title: string;
+      quantity: number;
+      sku: string | null;
+      variant: { id: string } | null;
+      originalUnitPriceSet: { shopMoney: { amount: string } } | null;
+      discountedUnitPriceSet: { shopMoney: { amount: string } } | null;
+    }>;
+  };
+}
+
+interface RawDireccion {
+  company: string | null;
+  address1: string | null;
+  address2: string | null;
+  city: string | null;
+  province: string | null;
+  countryCode: string | null;
+  phone: string | null;
+}
+
+function importe(nodo: { shopMoney: { amount: string } } | null | undefined): number {
+  return nodo ? Number(nodo.shopMoney.amount) : 0;
+}
+
+function normalizarPedido(n: RawPedido): PedidoShopify {
+  const dir = n.billingAddress ?? n.shippingAddress;
+
+  // El campo «Empresa» puede estar en facturación o en envío. Se prefiere el de
+  // facturación, que es donde lo pone quien pide factura a conciencia.
+  const empresa =
+    n.billingAddress?.company?.trim() || n.shippingAddress?.company?.trim() || null;
+
+  const nombre = [n.customer?.firstName, n.customer?.lastName].filter(Boolean).join(' ').trim();
+
+  return {
+    id: n.id,
+    legacyId: n.legacyResourceId,
+    nombre: n.name,
+    creadoEl: n.processedAt ?? n.createdAt,
+    estadoPago: n.displayFinancialStatus ?? 'DESCONOCIDO',
+    estadoEnvio: n.displayFulfillmentStatus ?? 'DESCONOCIDO',
+    impuestosIncluidos: n.taxesIncluded,
+    moneda: n.currencyCode,
+    email: n.email,
+    cliente: n.customer
+      ? { id: n.customer.id, nombre: nombre || null, email: n.customer.email }
+      : null,
+    empresa,
+    direccion: {
+      linea1: dir?.address1 ?? null,
+      linea2: dir?.address2 ?? null,
+      ciudad: dir?.city ?? null,
+      provincia: dir?.province ?? null,
+      pais: dir?.countryCode ?? null,
+      telefono: dir?.phone ?? null,
+    },
+    total: importe(n.totalPriceSet),
+    envio: importe(n.totalShippingPriceSet),
+    impuestos: importe(n.totalTaxSet),
+    lineas: n.lineItems.nodes.map((l) => ({
+      id: l.id,
+      titulo: l.title,
+      cantidad: l.quantity,
+      sku: l.sku,
+      precioOriginal: importe(l.originalUnitPriceSet),
+      // Si Shopify no manda el precio con descuento, el original ya es el final.
+      precioConDescuento: l.discountedUnitPriceSet
+        ? importe(l.discountedUnitPriceSet)
+        : importe(l.originalUnitPriceSet),
+    })),
+  };
+}
+
 export interface ProductoNuevo {
   titulo: string;
   sku: string;
@@ -491,6 +811,45 @@ export class ShopifyClient {
       (e) => `${(e.field ?? []).join('.')}: ${e.message}`,
     );
     return { ok: errores.length === 0, errores };
+  }
+
+  /**
+   * Recorre los pedidos de la tienda, del más reciente al más antiguo.
+   *
+   * `filtro` usa la sintaxis de búsqueda de Shopify. El que interesa para
+   * facturar es `financial_status:paid`: un pedido sin pagar no se factura.
+   *
+   * El campo «Empresa» se toma de la dirección de facturación y, si está vacía,
+   * de la de envío. El cliente puede haberlo escrito en cualquiera de las dos y
+   * quedarse sólo con una perdería pedidos.
+   */
+  async *listarPedidos(
+    filtro = 'financial_status:paid',
+    maxItems = 500,
+  ): AsyncGenerator<PedidoShopify, void, undefined> {
+    let after: string | null = null;
+    let vistos = 0;
+
+    for (;;) {
+      const data: { orders: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: RawPedido[] } } =
+        await this.query(PEDIDOS_QUERY, { first: 25, after, query: filtro });
+
+      for (const n of data.orders.nodes) {
+        yield normalizarPedido(n);
+        vistos++;
+        if (vistos >= maxItems) return;
+      }
+
+      if (!data.orders.pageInfo.hasNextPage) return;
+      after = data.orders.pageInfo.endCursor;
+      if (!after) return;
+    }
+  }
+
+  /** Un pedido concreto, releído de Shopify. */
+  async obtenerPedido(gid: string): Promise<PedidoShopify | null> {
+    const data = await this.query<{ order: RawPedido | null }>(PEDIDO_QUERY, { id: gid });
+    return data.order ? normalizarPedido(data.order) : null;
   }
 
   /**

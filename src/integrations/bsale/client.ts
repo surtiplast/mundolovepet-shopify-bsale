@@ -124,6 +124,103 @@ export interface BsaleCosts {
   history?: Array<{ cost?: number; admissionDate?: number; availableFifo?: number }>;
 }
 
+/** Cliente de Bsale. GET/POST /v1/clients.json */
+export interface BsaleClienteRegistro {
+  href?: string;
+  id: number;
+  /** El DNI o el RUC. Bsale lo llama `code` por herencia del RUT chileno. */
+  code?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  company?: string | null;
+  email?: string | null;
+  /** 0 persona natural, 1 empresa. */
+  companyOrPerson?: number | null;
+  state?: number;
+}
+
+/** Lo que hace falta para dar de alta un cliente. */
+export interface NuevoCliente {
+  /** DNI (8) o RUC (11). */
+  code: string;
+  /** Razón social. Obligatoria para factura. */
+  company?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string | null;
+  address?: string | null;
+  city?: string | null;
+  municipality?: string | null;
+  /** 0 persona, 1 empresa. */
+  companyOrPerson: 0 | 1;
+  activity?: string | null;
+}
+
+/** Una línea del comprobante. */
+export interface DetalleDocumento {
+  /** El SKU. Bsale acepta `code` en vez de `variantId`, y así no hay que resolverlo. */
+  code?: string;
+  variantId?: number;
+  /** Valor unitario SIN impuesto. Bsale rechaza los negativos. */
+  netUnitValue: number;
+  quantity: number;
+  /** Los ids de impuesto entre corchetes, como cadena: "[1]". Así lo pide Bsale. */
+  taxId: string;
+  comment?: string;
+  /** PORCENTAJE de descuento, no importe. */
+  discount?: number;
+}
+
+/** Lo que se manda para emitir. */
+export interface NuevoDocumento {
+  documentTypeId: number;
+  officeId: number;
+  priceListId?: number;
+  /** Segundos desde epoch. Sin zona horaria: sólo cuenta la fecha. */
+  emissionDate: number;
+  expirationDate: number;
+  /** 1 para declarar ante SUNAT. */
+  declare: 0 | 1;
+  clientId?: number;
+  client?: Record<string, unknown>;
+  details: DetalleDocumento[];
+  references?: Array<{ number: string; referenceDate: number; reason: string; code: string }>;
+  /**
+   * La clave anti-duplicado.
+   *
+   * Si Bsale ya tiene un documento con este `salesId` para este tipo de
+   * documento, **devuelve el existente en vez de crear otro**. Es la última
+   * defensa: aunque falle todo lo demás, no se emiten dos comprobantes por el
+   * mismo pedido.
+   */
+  salesId?: string;
+  /** 1 descuenta stock en Bsale. */
+  dispatch?: 0 | 1;
+  sendEmail?: 0 | 1;
+}
+
+/** El comprobante emitido. */
+export interface DocumentoEmitido {
+  id: number;
+  number: number;
+  /** Serie y número, p. ej. «B001-1234». */
+  serialNumber?: string | null;
+  emissionDate: number;
+  totalAmount: number;
+  netAmount?: number;
+  taxAmount?: number;
+  token: string;
+  urlPdf?: string | null;
+  urlPublicView?: string | null;
+  urlXml?: string | null;
+  /** 0 correcto, 1 enviado, 2 rechazado por SUNAT. */
+  informed?: number | null;
+  responseMsg?: string | null;
+  salesId?: string | null;
+  document_type?: { id?: string | number } | null;
+  client?: { id?: string | number } | null;
+}
+
 /** Precio de una variante en una lista. GET /v1/price_lists/{id}/details.json */
 export interface BsalePriceDetail {
   href: string;
@@ -313,6 +410,77 @@ export class BsaleClient {
     }
   }
 
+  // ── Clientes y comprobantes ────────────────────────────────────────────────
+
+  /**
+   * Busca un cliente por su DNI o RUC.
+   *
+   * Se busca ANTES de crear, siempre. Bsale no impide dar de alta dos clientes
+   * con el mismo documento, y una base llena de duplicados hace inservibles los
+   * informes de ventas por cliente.
+   */
+  async buscarCliente(code: string): Promise<BsaleClienteRegistro | null> {
+    const limpio = code.replace(/\D/g, '');
+    if (!limpio) return null;
+
+    const datos = await this.get<BsalePage<BsaleClienteRegistro>>('/clients.json', {
+      code: limpio,
+      limit: 5,
+    });
+
+    // Se compara otra vez el código: el filtro de Bsale es laxo en algunos
+    // recursos y devolver el cliente equivocado sería facturar a otra persona.
+    return (datos.items ?? []).find((c) => (c.code ?? '').replace(/\D/g, '') === limpio) ?? null;
+  }
+
+  /** Da de alta un cliente. Usar sólo después de que `buscarCliente` diga que no existe. */
+  async crearCliente(cliente: NuevoCliente): Promise<BsaleClienteRegistro> {
+    return this.post<BsaleClienteRegistro>('/clients.json', {
+      ...cliente,
+      code: cliente.code.replace(/\D/g, ''),
+    });
+  }
+
+  /**
+   * Emite un comprobante. **Esto declara ante SUNAT y no se deshace.**
+   *
+   * ── Por qué esta llamada no se reintenta ─────────────────────────────────
+   *
+   * `requestWithRetry` reintenta los fallos de red. Aquí eso sería peligroso:
+   * un tiempo de espera agotado no significa que el documento no se haya
+   * emitido —puede haberse creado y haberse perdido la respuesta—, y reintentar
+   * a ciegas emitiría el segundo.
+   *
+   * La protección real es `salesId`: si se manda, Bsale devuelve el documento
+   * que ya existe en vez de crear otro. Por eso el servicio lo pone siempre, y
+   * por eso aquí sí se puede reintentar sin miedo **mientras `salesId` venga
+   * informado**. Si falta, se rechaza antes de llamar.
+   */
+  async emitirDocumento(documento: NuevoDocumento): Promise<DocumentoEmitido> {
+    if (!documento.salesId) {
+      throw new IntegrationError(
+        'No se puede emitir sin salesId: es lo que impide que un reintento genere un segundo comprobante.',
+        { provider: 'BSALE', retryable: false },
+      );
+    }
+    if (documento.details.length === 0) {
+      throw new IntegrationError('No se puede emitir un comprobante sin líneas.', {
+        provider: 'BSALE',
+        retryable: false,
+      });
+    }
+    for (const d of documento.details) {
+      if (d.netUnitValue < 0) {
+        throw new IntegrationError(
+          'Bsale y SUNAT rechazan un valor unitario negativo. Revisa los descuentos del pedido.',
+          { provider: 'BSALE', retryable: false },
+        );
+      }
+    }
+
+    return this.post<DocumentoEmitido>('/documents.json', documento);
+  }
+
   // ── Transporte ─────────────────────────────────────────────────────────────
 
   async get<T>(path: string, query: Record<string, string | number | undefined> = {}): Promise<T> {
@@ -321,6 +489,11 @@ export class BsaleClient {
       if (value !== undefined) url.searchParams.set(key, String(value));
     }
     return this.enqueue(() => this.requestWithRetry<T>('GET', url.toString()));
+  }
+
+  async post<T>(path: string, body: unknown): Promise<T> {
+    const url = new URL(this.baseUrl + path);
+    return this.enqueue(() => this.requestWithRetry<T>('POST', url.toString(), body));
   }
 
   /** Serializa las peticiones. Bsale no documenta su cuota; no la presionamos. */
