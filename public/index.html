@@ -139,16 +139,29 @@
 <body>
 <div class="wrap">
 
-  <header class="top">
+  <header class="top" id="cabeceraPropia">
     <div class="logo">🐾</div>
     <div>
       <h1>Mundo Love Pet — Shopify × Bsale</h1>
       <div class="sub">Panel de integración · Perú</div>
     </div>
-    <span class="phase" id="phaseBadge">Fase 3 · Sincronización</span>
+    <span class="phase" id="phaseBadge">Fase 6 · Comprobantes</span>
   </header>
 
   <div id="banner"></div>
+
+  <!-- ── Cabecera de Shopify ──────────────────────────────────────────────────
+       `ui-title-bar` escribe en la cabecera del admin, arriba del todo: el
+       título a la izquierda y sus botones a la derecha, junto a los tres puntos.
+
+       Sin esto, Shopify pone ahí el nombre de la app tal como está en el Dev
+       Dashboard («Sincronización de venta»). El nombre del menú lateral SÍ sigue
+       saliendo de ahí; esto sólo cambia la cabecera de la página.
+
+       Fuera de Shopify la etiqueta se ignora y vale la cabecera de abajo. -->
+  <ui-title-bar title="Mundo Love Pet — Shopify × Bsale">
+    <button id="btnFase">Fase 6 · Comprobantes</button>
+  </ui-title-bar>
 
   <!-- ── Menú en la barra lateral de Shopify ──────────────────────────────────
        `ui-nav-menu` es de App Bridge: dibuja estos enlaces DENTRO del menú de
@@ -306,9 +319,15 @@
 
   <pre class="out" id="output"></pre>
 
-  <div class="note">
-    <strong>Alcance de esta fase.</strong> El panel sólo lee y verifica credenciales.
-    Todavía no escribe precios ni stock en Shopify, y no emite ningún documento en Bsale.
+  <div class="note" id="notaAlcance">
+    <strong>Qué hace esta app.</strong> Lee el catálogo de Bsale, sincroniza precios
+    y stock hacia Shopify, crea en borrador los productos que faltan, y emite las
+    boletas y facturas de los pedidos pagados.
+    <br><br>
+    <strong>Lo que escribe de verdad va en rojo</strong>, y todo tiene simulación
+    previa. Emitir un comprobante declara ante SUNAT y no se deshace: para
+    corregirlo hay que anularlo con otro documento.
+    <br><br>
     Los tokens se guardan cifrados con AES-256-GCM y nunca se muestran completos —
     sólo los últimos 4 caracteres.
   </div>
@@ -1105,6 +1124,19 @@ async function emitirComprobante(id, nombre, boton) {
 }
 
 $('btnPedidos').onclick = (e) => verPedidos(e.target);
+
+/* Dentro de Shopify la cabecera propia sobra: el título y la fase ya salen
+   arriba, en la cabecera del admin. Enseñarlos dos veces sólo roba sitio. */
+if (dentroDeShopify()) $('cabeceraPropia').hidden = true;
+
+/* El botón de la fase no es decorativo: lleva a la nota que explica qué hace la
+   app y qué no. Un botón que no hace nada es peor que no tenerlo. */
+const btnFase = $('btnFase');
+if (btnFase) {
+  btnFase.onclick = () => {
+    $('notaAlcance').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
+}
 
 /* ── Pestañas ────────────────────────────────────────────────────────────────
 

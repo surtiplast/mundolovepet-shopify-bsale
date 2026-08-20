@@ -157,7 +157,7 @@ export async function createApp(
   app.get('/api/health', (_req, res) => {
     res.json({
       status: 'ok',
-      fase: 1,
+      fase: 6,
       almacen: storeKind,
       versionApiShopify: env.SHOPIFY_API_VERSION,
       hora: new Date().toISOString(),
