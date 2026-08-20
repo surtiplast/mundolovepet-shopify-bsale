@@ -109,9 +109,24 @@ export function leerCredenciales(cabecera: string | undefined): { usuario: strin
  */
 export const CABECERA_AUTENTICACION = 'Basic realm="Mundo Love Pet - Bsale", charset="UTF-8"';
 
-/** El HTML del panel, no la API ni los datos. */
+/**
+ * El HTML del panel, no la API ni los datos.
+ *
+ * Son varias rutas porque el menú lateral de Shopify navega con enlaces de
+ * verdad y cada pestaña tiene la suya. Todas devuelven la misma página.
+ */
+const RUTAS_DEL_PANEL = new Set([
+  '/',
+  '/index.html',
+  '/conexion',
+  '/catalogo',
+  '/sincronizar',
+  '/productos',
+  '/comprobantes',
+]);
+
 function esPaginaDelPanel(path: string): boolean {
-  return path === '/' || path === '/index.html';
+  return RUTAS_DEL_PANEL.has(path);
 }
 
 /**

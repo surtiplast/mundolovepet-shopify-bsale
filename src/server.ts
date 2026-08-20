@@ -186,8 +186,24 @@ export async function createApp(
     res.type('html').send(panelHtml);
   };
 
-  app.get('/', servirPanel);
-  app.get('/index.html', servirPanel);
+  // El menú lateral de Shopify navega con enlaces de verdad, así que cada
+  // pestaña necesita su dirección. Todas devuelven el mismo panel; cuál se
+  // enseña lo decide el navegador leyendo la ruta.
+  //
+  // No es enrutado de verdad: es una sola página que se pinta distinto. Pero
+  // tener direcciones propias hace que el botón «atrás» funcione y que un
+  // enlace a «Comprobantes» abra ahí.
+  const RUTAS_DEL_PANEL = [
+    '/',
+    '/index.html',
+    '/conexion',
+    '/catalogo',
+    '/sincronizar',
+    '/productos',
+    '/comprobantes',
+  ];
+
+  for (const ruta of RUTAS_DEL_PANEL) app.get(ruta, servirPanel);
 
   // El resto de estáticos, si algún día los hay.
   app.use(express.static(path.join(__dirname, '..', 'public'), { index: false }));

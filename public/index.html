@@ -150,11 +150,30 @@
 
   <div id="banner"></div>
 
+  <!-- ── Menú en la barra lateral de Shopify ──────────────────────────────────
+       `ui-nav-menu` es de App Bridge: dibuja estos enlaces DENTRO del menú de
+       Shopify, debajo del nombre de la app, no aquí.
+
+       El primer enlace configura la ruta de inicio y NO se dibuja —así lo define
+       App Bridge—, por eso hay un «Inicio» aparte de «Conexión»: sin él,
+       «Conexión» sería el que desaparece.
+
+       Fuera de Shopify esta etiqueta no existe y el navegador la ignora; ahí
+       sirven las pestañas de abajo. -->
+  <ui-nav-menu>
+    <a href="/" rel="home">Inicio</a>
+    <a href="/conexion">Conexión</a>
+    <a href="/catalogo">Catálogo</a>
+    <a href="/sincronizar">Sincronizar</a>
+    <a href="/productos">Productos nuevos</a>
+    <a href="/comprobantes">Comprobantes</a>
+  </ui-nav-menu>
+
   <!-- ── Pestañas ─────────────────────────────────────────────────────────────
        Agrupadas por tarea, y en el orden en que se usan: primero se comprueba
        la conexión, luego se lee el catálogo, luego se sincroniza, y al final
        se factura. Los botones que ESCRIBEN en la tienda van en rojo. -->
-  <nav class="tabs" role="tablist">
+  <nav class="tabs" role="tablist" id="tabs">
     <button class="tab" role="tab" data-tab="conexion" aria-selected="true">Conexión</button>
     <button class="tab" role="tab" data-tab="catalogo" aria-selected="false">Catálogo</button>
     <button class="tab" role="tab" data-tab="sincronizar" aria-selected="false">Sincronizar</button>
@@ -1107,23 +1126,42 @@ function mostrarPestana(nombre) {
     const suyas = seccion.dataset.tabs.split(' ');
     seccion.classList.toggle('fuera-de-pestana', !suyas.includes(nombre));
   }
-  // Sobrevive a recargas: dentro de Shopify el marco se recarga a menudo y
-  // volver siempre a «Conexión» obligaría a navegar de nuevo cada vez.
-  try { localStorage.setItem('pestana', nombre); } catch { /* sin almacenamiento */ }
 }
+
+/* Cada pestaña tiene su dirección, porque el menú de Shopify navega con
+   enlaces de verdad. El servidor devuelve el mismo panel para todas y aquí se
+   decide cuál enseñar. */
+const RUTAS = {
+  '/': 'conexion',
+  '/conexion': 'conexion',
+  '/catalogo': 'catalogo',
+  '/sincronizar': 'sincronizar',
+  '/productos': 'productos',
+  '/comprobantes': 'comprobantes',
+};
+
+function pestanaDeLaRuta() {
+  return RUTAS[location.pathname] ?? 'conexion';
+}
+
+/* Las pestañas de dentro se ocultan cuando Shopify ya dibuja el menú lateral:
+   tenerlas en los dos sitios sería repetir la misma navegación dos veces. */
+if (dentroDeShopify()) $('tabs').hidden = true;
 
 for (const tab of document.querySelectorAll('.tab')) {
-  tab.onclick = () => mostrarPestana(tab.dataset.tab);
+  tab.onclick = () => {
+    const destino = Object.keys(RUTAS).find((r) => RUTAS[r] === tab.dataset.tab && r !== '/');
+    // Se cambia la dirección sin recargar: así el botón «atrás» funciona y la
+    // pestaña sobrevive a un refresco del marco.
+    if (destino) history.pushState({}, '', destino);
+    mostrarPestana(tab.dataset.tab);
+  };
 }
 
-let pestanaGuardada = 'conexion';
-try {
-  const guardada = localStorage.getItem('pestana');
-  if (guardada && document.querySelector(`.tab[data-tab="${guardada}"]`)) {
-    pestanaGuardada = guardada;
-  }
-} catch { /* sin almacenamiento */ }
-mostrarPestana(pestanaGuardada);
+// El menú de Shopify puede navegar sin recargar la página.
+window.addEventListener('popstate', () => mostrarPestana(pestanaDeLaRuta()));
+
+mostrarPestana(pestanaDeLaRuta());
 
 refresh();
 </script>
