@@ -37,6 +37,7 @@ import {
   aplicarReparacion,
   type ResultadoReparacion,
 } from '../services/repair.service.js';
+import { buscarDuplicados } from '../services/duplicates.service.js';
 import type { ShopifyVariant } from '../integrations/shopify/client.js';
 import { IntegrationError } from '../lib/errors.js';
 import { logger } from '../lib/logger.js';
@@ -357,6 +358,41 @@ export function syncRouter(service: ConnectionService, store: CatalogStore, env:
       res.json({ ok: true, simulacion: false, resumen: plan.resumen, costos, resultado });
     } catch (error) {
       responderError(res, error, 'No se pudieron reparar los productos.');
+    }
+  });
+
+  /**
+   * Códigos repetidos en Shopify. **Sólo lee.**
+   *
+   * No borra nada y no va a hacerlo: dos variantes con el mismo código pueden
+   * ser un duplicado que creó la app o dos productos que el comerciante
+   * registró así a propósito, y desde aquí no hay forma de distinguirlo con
+   * certeza. Lo que sí hace es ordenar la sospecha.
+   */
+  router.get('/duplicados', async (_req: Request, res: Response) => {
+    try {
+      const variantes: ShopifyVariant[] = [];
+      await service.usarShopify(
+        env.SHOPIFY_SHOP_DOMAIN,
+        env.SHOPIFY_API_VERSION,
+        env.SHOPIFY_CLIENT_ID,
+        async (client) => {
+          for await (const v of client.listarVariantes()) variantes.push(v);
+        },
+      );
+
+      const informe = buscarDuplicados(variantes);
+
+      res.json({
+        ok: true,
+        resumen: { ...informe.resumen, totalVariantes: variantes.length },
+        // Se recortan: con muchos grupos el JSON se dispara y el panel no
+        // necesita más para que decidas por dónde empezar.
+        grupos: informe.grupos.slice(0, 100),
+        totalGrupos: informe.grupos.length,
+      });
+    } catch (error) {
+      responderError(res, error, 'No se pudo buscar duplicados.');
     }
   });
 

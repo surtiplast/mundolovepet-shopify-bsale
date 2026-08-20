@@ -208,6 +208,13 @@ model BsaleDocument {
   sunatMessage    String?
   /// Ruta interna del PDF. NUNCA una URL pública de Bsale.
   pdfStorageKey   String?
+  /// La URL del PDF en Bsale.
+  ///
+  /// Se guarda para poder servir el comprobante, pero NO se expone: el panel
+  /// pide `/api/comprobantes/:pedido/pdf` y la app hace de intermediaria. Esa
+  /// URL de Bsale es pública para quien la tenga —lleva un token en la propia
+  /// dirección—, así que enseñarla equivaldría a publicar la factura.
+  bsaleUrlPdf     String?
   pdfFetchedAt    DateTime?
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt

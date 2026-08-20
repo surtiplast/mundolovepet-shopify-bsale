@@ -9,21 +9,23 @@
 #    Render te los pide en el navegador al crear el Blueprint.
 #
 # ─────────────────────────────────────────────────────────────────────────────
-# ESTADO: FASE 1 — solo la base de datos y el servicio web.
+# ESTADO: base de datos, servicio web y cron de sincronización.
 #
-# Están comentados a propósito, y hay que reactivarlos más adelante:
+# ── Por qué NO hay cola ni worker ────────────────────────────────────────────
 #
-#   · mlp-queue  (Key Value)  → reactivar en la FASE 3, junto con REDIS_URL
-#                               en el servicio web. Sin cola no hay trabajos
-#                               en segundo plano.
-#   · mlp-worker (worker)     → reactivar en la FASE 3, cuando dist/worker.js
-#                               deje de ser un marcador de posición.
-#   · mlp-poll-bsale (cron)   → reactivar en la FASE 3, o antes si Bsale aún no
-#                               ha activado los webhooks.
+# El plan original era BullMQ con un worker permanente. Para este caso es
+# desproporcionado: sincronizar un catálogo dos veces al día no necesita una
+# cola, y un worker encendido las 24 horas más su Redis suman unos 21 USD al
+# mes.
 #
-# Por qué: hoy esos tres servicios no hacen nada — el worker y el cron solo
-# escriben una línea en el log— y suman unos 21 USD al mes. Para reactivarlos,
-# quita el `# ` del principio de sus bloques.
+# El cron `mlp-sync-auto` hace el mismo trabajo, cuesta una fracción y reutiliza
+# exactamente el código que ya usa el panel. La cola tendría sentido si hubiera
+# que reaccionar a webhooks en segundos o si el volumen creciera mucho; hoy no
+# es el caso, y montarla «por si acaso» sería pagar y mantener algo que no
+# resuelve ningún problema real.
+#
+# Los bloques `mlp-queue` y `mlp-worker` se quedan comentados por si algún día
+# hace falta ese salto.
 # ─────────────────────────────────────────────────────────────────────────────
 
 databases:
@@ -236,7 +238,7 @@ services:
 #   # entonces, este cron mantiene sincronizados stock y precios.
 #   # Se puede desactivar cuando los webhooks estén operativos.
 #   - type: cron
-#     name: mlp-poll-bsale
+#     name: mlp-poll-bsale-OBSOLETO
 #     runtime: node
 #     plan: starter
 #     region: virginia
@@ -271,3 +273,79 @@ services:
 #           type: web
 #           envVarKey: BSALE_API_BASE_URL
 #
+  # ── Sincronización automática ──────────────────────────────────────────────
+  #
+  # Lee Bsale, compara con Shopify y aplica las diferencias de stock. Los
+  # precios sólo si `SYNC_AUTO_PRECIOS=1`.
+  #
+  # NO crea productos ni emite comprobantes: esas dos decisiones siguen siendo
+  # humanas y se toman desde el panel.
+  - type: cron
+    name: mlp-sync-auto
+    runtime: node
+    region: virginia
+    plan: starter
+    # Dos veces al día, a las 7:00 y a las 19:00 en Lima (UTC-5). Render usa
+    # UTC, de ahí las 12 y las 0.
+    #
+    # Se evita la medianoche exacta y las horas en punto más congestionadas: si
+    # miles de crons arrancan a la vez, las APIs de terceros responden peor.
+    schedule: '10 12,0 * * *'
+    buildCommand: npm ci --include=dev && npx prisma generate && npm run build
+    startCommand: node dist/jobs/sincronizar.js
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mlp-db
+          property: connectionString
+      # Los secretos se copian del servicio web para no tenerlos en dos sitios
+      # y que se puedan rotar de una vez.
+      - key: ENCRYPTION_KEY
+        fromService:
+          type: web
+          name: mlp-sync
+          envVarKey: ENCRYPTION_KEY
+      - key: BSALE_ACCESS_TOKEN
+        fromService:
+          type: web
+          name: mlp-sync
+          envVarKey: BSALE_ACCESS_TOKEN
+      - key: SHOPIFY_SHOP_DOMAIN
+        fromService:
+          type: web
+          name: mlp-sync
+          envVarKey: SHOPIFY_SHOP_DOMAIN
+      - key: SHOPIFY_CLIENT_ID
+        fromService:
+          type: web
+          name: mlp-sync
+          envVarKey: SHOPIFY_CLIENT_ID
+      - key: SHOPIFY_CLIENT_SECRET
+        fromService:
+          type: web
+          name: mlp-sync
+          envVarKey: SHOPIFY_CLIENT_SECRET
+      - key: BSALE_OFFICE_ID
+        fromService:
+          type: web
+          name: mlp-sync
+          envVarKey: BSALE_OFFICE_ID
+      - key: BSALE_PRICE_LIST_ID
+        fromService:
+          type: web
+          name: mlp-sync
+          envVarKey: BSALE_PRICE_LIST_ID
+      # El cron no sirve el panel, pero `loadEnv` exige estas dos en producción.
+      - key: PANEL_USER
+        fromService:
+          type: web
+          name: mlp-sync
+          envVarKey: PANEL_USER
+      - key: PANEL_PASSWORD
+        fromService:
+          type: web
+          name: mlp-sync
+          envVarKey: PANEL_PASSWORD
+      # Los precios NO se tocan salvo que se ponga a 1, a conciencia.
+      - key: SYNC_AUTO_PRECIOS
+        value: '0'

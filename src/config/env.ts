@@ -65,6 +65,16 @@ const schema = z.object({
   // identidad la ponga Shopify con un token de sesión. Ver `lib/auth.ts`.
   PANEL_USER: z.string().min(1).optional(),
   PANEL_PASSWORD: z.string().min(12, 'PANEL_PASSWORD debe tener al menos 12 caracteres').optional(),
+
+  // ── Sincronización automática ──
+  //
+  // El stock se sincroniza siempre que corra el cron. Los precios NO, salvo que
+  // se active aquí: un precio que cambia solo en mitad del día propaga a la
+  // tienda cualquier error de Bsale sin que nadie lo mire.
+  SYNC_AUTO_PRECIOS: z
+    .string()
+    .optional()
+    .transform((v) => v === '1' || v?.toLowerCase() === 'true'),
 })
   /**
    * En producción el panel NO puede quedar abierto.

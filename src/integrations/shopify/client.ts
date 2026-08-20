@@ -91,6 +91,16 @@ export interface ShopifyVariant {
   productId: string | null;
   productTitle: string | null;
   title: string | null;
+  /**
+   * ACTIVE, DRAFT o ARCHIVED. La app crea siempre en DRAFT, así que sirve para
+   * distinguir lo que creó ella de lo que ya estaba.
+   */
+  estado: string | null;
+  /**
+   * Si el producto tiene alguna imagen. Los que crea la app nunca la tienen —no
+   * hay de dónde sacarla en Bsale—, y eso ayuda a reconocer un duplicado.
+   */
+  tieneImagen: boolean;
 }
 
 export const DEFAULT_API_VERSION = '2026-07';
@@ -150,6 +160,14 @@ const VARIANTS_QUERY = /* GraphQL */ `
         product {
           id
           title
+          status
+          # Basta con saber si hay al menos una. Pedir todas las imágenes de
+          # miles de productos multiplicaría el coste de la consulta para nada.
+          media(first: 1) {
+            nodes {
+              id
+            }
+          }
         }
       }
     }
@@ -195,6 +213,33 @@ const REPARAR_MUTATION = /* GraphQL */ `
       userErrors {
         field
         message
+      }
+    }
+  }
+`;
+
+/**
+ * Metafields del pedido.
+ *
+ * Sirve para dejar escrito en el propio pedido de Shopify qué comprobante se
+ * emitió. Sin esto, para saber si un pedido está facturado hay que abrir esta
+ * app; con esto se ve desde el pedido, que es donde lo va a buscar cualquiera
+ * que atienda a un cliente.
+ *
+ * `metafieldsSet` crea o actualiza indistintamente, y es **atómico**: si una de
+ * las claves falla, no se escribe ninguna. Admite hasta 25 por llamada.
+ */
+const METAFIELDS_MUTATION = /* GraphQL */ `
+  mutation GuardarMetafields($metafields: [MetafieldsSetInput!]!) {
+    metafieldsSet(metafields: $metafields) {
+      metafields {
+        key
+        value
+      }
+      userErrors {
+        field
+        message
+        code
       }
     }
   }
@@ -754,7 +799,12 @@ export class ShopifyClient {
             inventoryQuantity: number | null;
             inventoryItem: { id: string; unitCost: { amount: string } | null } | null;
             title: string | null;
-            product: { id: string; title: string } | null;
+            product: {
+              id: string;
+              title: string;
+              status: string | null;
+              media: { nodes: Array<{ id: string }> } | null;
+            } | null;
           }>;
         };
       } = await this.query(VARIANTS_QUERY, { first: 100, after });
@@ -773,6 +823,8 @@ export class ShopifyClient {
           productId: n.product?.id ?? null,
           productTitle: n.product?.title ?? null,
           title: n.title,
+          estado: n.product?.status ?? null,
+          tieneImagen: (n.product?.media?.nodes?.length ?? 0) > 0,
         };
         vistos++;
         if (vistos >= maxItems) return;
@@ -879,6 +931,46 @@ export class ShopifyClient {
     });
 
     const errores = (data.productVariantsBulkUpdate?.userErrors ?? []).map(
+      (e) => `${(e.field ?? []).join('.')}: ${e.message}`,
+    );
+    return { ok: errores.length === 0, errores };
+  }
+
+  /**
+   * Escribe en el pedido de Shopify los datos del comprobante emitido.
+   *
+   * Van bajo el espacio de nombres `bsale` para que se distingan de cualquier
+   * otro metafield de la tienda y se puedan borrar en bloque si algún día se
+   * desinstala la app.
+   *
+   * Todos son texto, incluido el número: aquí no se hacen cuentas con él y un
+   * `number_integer` obligaría a declarar la definición del metafield antes de
+   * poder escribirlo.
+   */
+  async guardarComprobanteEnPedido(
+    orderGid: string,
+    datos: { tipo: string; serie: string; numero: number; documentoId: number },
+  ): Promise<ResultadoEscritura> {
+    const metafields = [
+      { key: 'document_type', value: datos.tipo },
+      { key: 'serial_number', value: datos.serie },
+      { key: 'document_number', value: String(datos.numero) },
+      { key: 'document_id', value: String(datos.documentoId) },
+    ].map((m) => ({
+      ownerId: orderGid,
+      namespace: 'bsale',
+      type: 'single_line_text_field',
+      ...m,
+    }));
+
+    const data = await this.query<{
+      metafieldsSet: {
+        metafields: Array<{ key: string; value: string }> | null;
+        userErrors: Array<{ field: string[] | null; message: string }>;
+      };
+    }>(METAFIELDS_MUTATION, { metafields });
+
+    const errores = (data.metafieldsSet?.userErrors ?? []).map(
       (e) => `${(e.field ?? []).join('.')}: ${e.message}`,
     );
     return { ok: errores.length === 0, errores };

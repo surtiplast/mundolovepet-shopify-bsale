@@ -239,6 +239,7 @@
       <button id="btnCrear" class="peligro">Crear productos en Shopify (borrador)</button>
       <button id="btnSimReparar">Simular reparación</button>
       <button id="btnReparar" class="peligro">Reparar código de barras y costo</button>
+      <button id="btnDuplicados">Buscar SKU duplicados</button>
     </div>
   </div>
 
@@ -252,6 +253,29 @@
   </div>
 
   <section class="grid" id="cards" data-tabs="conexion"></section>
+
+  <section id="duplicados" data-tabs="productos" hidden>
+    <h2 class="cat-titulo">Códigos repetidos en Shopify</h2>
+    <div id="dupResumen" class="cat-resumen"></div>
+    <p class="tab-nota">
+      Esta pantalla <strong>no borra nada</strong>. Dos variantes con el mismo
+      código pueden ser un duplicado que creó la app o dos productos que
+      registraste así a propósito, y desde aquí no hay forma de saberlo con
+      certeza. Lo marcado como <b>probable</b> es borrador y sin imagen: así es
+      como crea la app, y por eso conviene mirarlo primero.
+    </p>
+    <div class="cat-tabla-scroll">
+      <table class="cat-tabla">
+        <thead>
+          <tr>
+            <th>Código</th><th>Producto</th><th>SKU</th>
+            <th>Código de barras</th><th class="num">Precio</th><th>Estado</th>
+          </tr>
+        </thead>
+        <tbody id="dupCuerpo"></tbody>
+      </table>
+    </div>
+  </section>
 
   <section id="pedidos" data-tabs="comprobantes" hidden>
     <h2 class="cat-titulo">Pedidos por facturar</h2>
@@ -1048,6 +1072,9 @@ $('btnReparar').onclick = async (e) => {
    La emisión declara ante SUNAT y no se deshace, así que va de uno en uno y con
    una confirmación que dice el número exacto. */
 function chipComprobante(p) {
+  if (p.emitido) {
+    return `<span class="cat-chip">${p.emitido.comprobante === 'FACTURA' ? 'Factura' : 'Boleta'} emitida</span>`;
+  }
   if (!p.puedeEmitirse) return '<span class="cat-chip alerta">Revisar</span>';
   return `<span class="cat-chip">${p.comprobante === 'FACTURA' ? 'Factura' : 'Boleta'}</span>`;
 }
@@ -1068,15 +1095,30 @@ async function verPedidos(boton) {
       $('pedidos').hidden = false;
       $('pedResumen').innerHTML = [
         `<span class="cat-chip">Pedidos <b>${data.total}</b></span>`,
-        `<span class="cat-chip">Boletas <b>${r.boletas}</b></span>`,
-        `<span class="cat-chip">Facturas <b>${r.facturas}</b></span>`,
+        `<span class="cat-chip">Ya emitidos <b>${r.emitidos}</b></span>`,
+        `<span class="cat-chip">Boletas por emitir <b>${r.boletas}</b></span>`,
+        `<span class="cat-chip">Facturas por emitir <b>${r.facturas}</b></span>`,
         `<span class="cat-chip${r.revisar > 0 ? ' alerta' : ''}">A revisar <b>${r.revisar}</b></span>`,
       ].join('');
 
       $('pedCuerpo').innerHTML = (data.pedidos || []).map((p) => {
-        const accion = p.puedeEmitirse
-          ? `<button class="peligro" data-emitir="${escapeHtml(p.id)}" data-nombre="${escapeHtml(p.nombre)}">Emitir</button>`
-          : `<small>${escapeHtml((p.motivos[0] || p.motivoDecision || '').slice(0, 120))}</small>`;
+        /* Tres estados, y el orden importa: un pedido ya emitido no debe
+           enseñar el botón aunque «pueda emitirse», o invitaría a pulsarlo. */
+        let accion;
+        if (p.emitido) {
+          // `sunat`: 0 aceptado, 1 enviado, 2 rechazado.
+          const rechazado = p.emitido.sunat === 2;
+          const idPedido = String(p.id).split('/').pop();
+          accion = `<span class="cat-tag${rechazado ? '' : ' ok'}">${escapeHtml(p.emitido.serie || String(p.emitido.numero))}</span>`
+            + (p.emitido.tienePdf
+                ? `<br><a href="/api/comprobantes/${encodeURIComponent(idPedido)}/pdf" target="_blank" rel="noopener"><small>Ver PDF</small></a>`
+                : '')
+            + (rechazado ? '<br><small>Rechazado por SUNAT</small>' : '');
+        } else if (p.puedeEmitirse) {
+          accion = `<button class="peligro" data-emitir="${escapeHtml(p.id)}" data-nombre="${escapeHtml(p.nombre)}">Emitir</button>`;
+        } else {
+          accion = `<small>${escapeHtml((p.motivos[0] || p.motivoDecision || '').slice(0, 120))}</small>`;
+        }
 
         return `<tr>
           <td class="sku">${escapeHtml(p.nombre)}<br><small>${new Date(p.fecha).toLocaleDateString('es-PE')}</small></td>
@@ -1140,6 +1182,76 @@ async function emitirComprobante(id, nombre, boton) {
 }
 
 $('btnPedidos').onclick = (e) => verPedidos(e.target);
+
+/* ── Duplicados ──────────────────────────────────────────────────────────────
+   Sólo lee. Las variantes de cada grupo van ordenadas de más a menos
+   sospechosa, así que la primera de cada bloque es la candidata a borrar. */
+async function buscarDuplicados(boton) {
+  boton.disabled = true;
+  const original = boton.textContent;
+  boton.textContent = 'Buscando…';
+  try {
+    const res = await pedir('/api/duplicados');
+    const data = await res.json();
+
+    if (!res.ok) {
+      banner('err', data.error?.message || 'No se pudo buscar duplicados.');
+      show(data);
+    } else {
+      const r = data.resumen;
+      $('duplicados').hidden = false;
+      $('dupResumen').innerHTML = [
+        `<span class="cat-chip">Variantes revisadas <b>${r.totalVariantes}</b></span>`,
+        `<span class="cat-chip${r.codigosRepetidos > 0 ? ' alerta' : ''}">Códigos repetidos <b>${r.codigosRepetidos}</b></span>`,
+        `<span class="cat-chip${r.excedente > 0 ? ' alerta' : ''}">Variantes que sobran <b>${r.excedente}</b></span>`,
+        `<span class="cat-chip">Parecen creadas por la app <b>${r.sospechosas}</b></span>`,
+      ].join('');
+
+      /* Cada grupo se pinta como un bloque: primero una fila con el código y
+         debajo sus variantes. Sin esa separación, con decenas de grupos no se
+         distingue dónde acaba uno y empieza el siguiente. */
+      $('dupCuerpo').innerHTML = (data.grupos || []).map((g) => {
+        const cabecera = `<tr><td colspan="6" style="background:var(--panel-2);font-weight:600">
+            ${escapeHtml(g.codigo)}
+            <span class="cat-chip" style="margin-left:8px">${g.variantes.length} variantes</span>
+            <span class="cat-chip">coincide en ${g.campo === 'ambos' ? 'los dos campos' : g.campo === 'sku' ? 'SKU' : 'código de barras'}</span>
+          </td></tr>`;
+
+        const filas = g.variantes.map((v) => {
+          const marca = v.sospecha === 2
+            ? '<span class="cat-tag">probable duplicado</span>'
+            : v.sospecha === 1
+              ? '<span class="cat-tag">dudoso</span>'
+              : '<span class="cat-tag ok">parece original</span>';
+
+          return `<tr>
+            <td></td>
+            <td>${escapeHtml(v.titulo || '—')}<br><small>${v.esBorrador ? 'Borrador' : 'Publicado'}${v.sinImagen ? ' · sin imagen' : ''}</small></td>
+            <td class="sku">${v.sku ? escapeHtml(v.sku) : '<span class="vacio">—</span>'}</td>
+            <td class="sku">${v.barcode ? escapeHtml(v.barcode) : '<span class="vacio">—</span>'}</td>
+            <td class="num">${v.precio == null ? '—' : soles(v.precio)}</td>
+            <td>${marca}</td>
+          </tr>`;
+        }).join('');
+
+        return cabecera + filas;
+      }).join('');
+
+      banner(
+        r.codigosRepetidos > 0 ? 'err' : 'ok',
+        r.codigosRepetidos === 0
+          ? 'No hay códigos repetidos en la tienda.'
+          : `${r.codigosRepetidos} códigos repetidos. Sobran ${r.excedente} variantes, de las que ${r.sospechosas} parecen creadas por la app.`,
+      );
+    }
+  } catch (err) {
+    banner('err', 'Error de red al buscar duplicados.');
+  }
+  boton.disabled = false;
+  boton.textContent = original;
+}
+
+$('btnDuplicados').onclick = (e) => buscarDuplicados(e.target);
 
 /* El botón de la fase no es decorativo: lleva a la nota que explica qué hace la
    app y qué no. Un botón que no hace nada es peor que no tenerlo. */

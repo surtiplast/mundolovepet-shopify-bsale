@@ -20,6 +20,7 @@ import {
   type PlanComprobante,
 } from '../services/invoice.service.js';
 import type { PedidoShopify } from '../integrations/shopify/client.js';
+import type { InvoiceStore } from '../db/invoice.store.js';
 import { IntegrationError } from '../lib/errors.js';
 import { logger } from '../lib/logger.js';
 
@@ -93,7 +94,11 @@ function resumirParaPanel(plan: PlanComprobante) {
   };
 }
 
-export function invoicesRouter(service: ConnectionService, env: Env): Router {
+export function invoicesRouter(
+  service: ConnectionService,
+  env: Env,
+  emisiones: InvoiceStore,
+): Router {
   const router = Router();
 
   /** Lista de pedidos con la simulación de cada uno. Nunca emite. */
@@ -116,15 +121,38 @@ export function invoicesRouter(service: ConnectionService, env: Env): Router {
 
       const planes = pedidos.map((p) => planificarComprobante(p, config));
 
+      // Los que ya se emitieron. Sin esto el panel volvería a ofrecer el botón
+      // de emitir en pedidos ya facturados, y aunque Bsale no crearía un
+      // segundo comprobante, invitar a pulsarlo es pedir un susto.
+      const facturados = await emisiones.listarFacturados();
+
+      const filas = planes.map((plan) => {
+        const ya = facturados.get(plan.pedido.legacyId);
+        return {
+          ...resumirParaPanel(plan),
+          emitido: ya
+            ? {
+                comprobante: ya.kind,
+                serie: ya.serialNumber,
+                numero: ya.number,
+                sunat: ya.sunatState,
+                fecha: ya.emitidoEl,
+                tienePdf: ya.tienePdf,
+              }
+            : null,
+        };
+      });
+
       res.json({
         ok: true,
         total: planes.length,
         resumen: {
-          boletas: planes.filter((p) => p.decision.comprobante === 'BOLETA' && p.documento).length,
-          facturas: planes.filter((p) => p.decision.comprobante === 'FACTURA' && p.documento).length,
-          revisar: planes.filter((p) => !p.documento).length,
+          emitidos: filas.filter((f) => f.emitido).length,
+          boletas: filas.filter((f) => !f.emitido && f.comprobante === 'BOLETA' && f.puedeEmitirse).length,
+          facturas: filas.filter((f) => !f.emitido && f.comprobante === 'FACTURA' && f.puedeEmitirse).length,
+          revisar: filas.filter((f) => !f.emitido && !f.puedeEmitirse).length,
         },
-        pedidos: planes.map(resumirParaPanel),
+        pedidos: filas,
       });
     } catch (error) {
       responderError(res, error, 'No se pudieron leer los pedidos.');
@@ -181,6 +209,81 @@ export function invoicesRouter(service: ConnectionService, env: Env): Router {
         return res.status(502).json({ error: { message: resultado.error } });
       }
 
+      // ── Registrar la emisión ────────────────────────────────────────────
+      //
+      // Va DESPUÉS de emitir y en su propio try: si Bsale ya emitió el
+      // comprobante, un fallo al guardarlo en nuestra base no debe convertirse
+      // en un error para el usuario. El comprobante existe; lo que faltaría es
+      // el apunte, y eso se arregla sin consecuencias fiscales.
+      const doc = resultado.documento;
+      if (doc) {
+        try {
+          await emisiones.registrar({
+            shopifyOrderId: plan.pedido.legacyId,
+            shopifyOrderName: plan.pedido.nombre,
+            shopifyOrderGid: plan.pedido.id,
+            idempotencyKey: plan.documento.salesId!,
+            kind: plan.decision.comprobante!,
+            totalAmount: plan.resumen.total,
+            currency: plan.pedido.moneda,
+            documento: {
+              bsaleDocumentId: doc.id,
+              documentTypeId: plan.documento.documentTypeId,
+              serialNumber: doc.serialNumber ?? String(doc.number),
+              number: doc.number,
+              emissionDate: doc.emissionDate,
+              totalAmount: doc.totalAmount,
+              token: doc.token,
+              sunatState: doc.informed ?? null,
+              sunatMessage: doc.responseMsg ?? null,
+              // `urlPdfOriginal` trae sólo el original; `urlPdf` incluye las
+              // copias. Se prefiere el segundo: es lo que el cliente espera
+              // recibir.
+              urlPdf: doc.urlPdf ?? doc.urlPublicView ?? null,
+            },
+          });
+        } catch (error) {
+          logger.error(
+            { pedido: plan.pedido.nombre, err: (error as Error).message },
+            'El comprobante se emitió pero no se pudo registrar en la base de datos',
+          );
+        }
+      }
+
+      // ── Dejarlo escrito en el pedido de Shopify ─────────────────────────
+      //
+      // Para que se vea desde el propio pedido, sin abrir esta app. Va en su
+      // propio try por lo mismo que el registro: el comprobante ya existe, y
+      // que no se pueda anotar no debe presentarse como un fallo de emisión.
+      if (doc) {
+        try {
+          await service.usarShopify(
+            env.SHOPIFY_SHOP_DOMAIN,
+            env.SHOPIFY_API_VERSION,
+            env.SHOPIFY_CLIENT_ID,
+            async (client) => {
+              const r = await client.guardarComprobanteEnPedido(plan.pedido.id, {
+                tipo: plan.decision.comprobante!,
+                serie: doc.serialNumber ?? String(doc.number),
+                numero: doc.number,
+                documentoId: doc.id,
+              });
+              if (!r.ok) {
+                logger.warn(
+                  { pedido: plan.pedido.nombre, errores: r.errores },
+                  'No se pudieron escribir los metafields del comprobante',
+                );
+              }
+            },
+          );
+        } catch (error) {
+          logger.warn(
+            { pedido: plan.pedido.nombre, err: (error as Error).message },
+            'No se pudieron escribir los metafields del comprobante',
+          );
+        }
+      }
+
       logger.info(
         {
           pedido: plan.pedido.nombre,
@@ -207,6 +310,49 @@ export function invoicesRouter(service: ConnectionService, env: Env): Router {
       });
     } catch (error) {
       responderError(res, error, 'No se pudo emitir el comprobante.');
+    }
+  });
+
+  /**
+   * El PDF del comprobante.
+   *
+   * ── Por qué pasa por aquí y no se enlaza directamente ─────────────────────
+   *
+   * La URL que devuelve Bsale es pública para quien la tenga: lleva un token en
+   * la propia dirección y no pide nada más. Enlazarla desde el panel la pondría
+   * en el historial del navegador, en los registros de cualquier intermediario
+   * y en el portapapeles de quien la copie.
+   *
+   * Sirviéndola desde aquí, el PDF queda detrás del mismo candado que el resto
+   * del panel y la dirección de Bsale no sale nunca del servidor.
+   */
+  router.get('/comprobantes/:pedido/pdf', async (req: Request, res: Response) => {
+    try {
+      const url = await emisiones.urlPdfDe(req.params.pedido!);
+      if (!url) {
+        return res.status(404).json({ error: { message: 'Ese pedido no tiene comprobante.' } });
+      }
+
+      const respuesta = await fetch(url);
+      if (!respuesta.ok || !respuesta.body) {
+        throw new IntegrationError(`Bsale devolvió ${respuesta.status} al pedir el PDF.`, {
+          provider: 'BSALE',
+          retryable: true,
+        });
+      }
+
+      res.setHeader('Content-Type', 'application/pdf');
+      // `inline` para que se abra en el navegador; el nombre sólo importa si el
+      // usuario lo descarga.
+      res.setHeader(
+        'Content-Disposition',
+        `inline; filename="comprobante-${req.params.pedido}.pdf"`,
+      );
+
+      const buffer = Buffer.from(await respuesta.arrayBuffer());
+      res.send(buffer);
+    } catch (error) {
+      responderError(res, error, 'No se pudo obtener el PDF del comprobante.');
     }
   });
 

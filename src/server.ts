@@ -34,12 +34,23 @@ import {
   type CatalogStore,
   type PrismaCatalogLike,
 } from './db/catalog.store.js';
+import {
+  InMemoryInvoiceStore,
+  PrismaInvoiceStore,
+  type InvoiceStore,
+  type PrismaInvoiceLike,
+} from './db/invoice.store.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function resolveStore(
   env: Env,
-): Promise<{ store: ConnectionStore; catalog: CatalogStore; kind: string }> {
+): Promise<{
+  store: ConnectionStore;
+  catalog: CatalogStore;
+  invoices: InvoiceStore;
+  kind: string;
+}> {
   try {
     // Import dinámico: la app arranca aunque `prisma generate` no se haya
     // ejecutado todavía, lo que hace mucho más suave el primer despliegue.
@@ -51,6 +62,7 @@ async function resolveStore(
     return {
       store: new PrismaConnectionStore(prisma),
       catalog: new PrismaCatalogStore(prisma as unknown as PrismaCatalogLike),
+      invoices: new PrismaInvoiceStore(prisma as unknown as PrismaInvoiceLike),
       kind: 'postgresql',
     };
   } catch (error) {
@@ -61,6 +73,7 @@ async function resolveStore(
     return {
       store: new InMemoryConnectionStore(),
       catalog: new InMemoryCatalogStore(),
+      invoices: new InMemoryInvoiceStore(),
       kind: 'memoria (volátil)',
     };
   }
@@ -71,6 +84,7 @@ export async function createApp(
   store: ConnectionStore,
   storeKind: string,
   catalog: CatalogStore = new InMemoryCatalogStore(),
+  invoices: InvoiceStore = new InMemoryInvoiceStore(),
 ) {
   const encryptionKey = parseEncryptionKey(env.ENCRYPTION_KEY);
   const service = new ConnectionService({ store, encryptionKey });
@@ -172,7 +186,7 @@ export async function createApp(
   app.use('/api', connectionsRouter(service, env));
   app.use('/api', catalogRouter(service, catalog, env));
   app.use('/api', syncRouter(service, catalog, env));
-  app.use('/api', invoicesRouter(service, env));
+  app.use('/api', invoicesRouter(service, env, invoices));
 
   // ── El panel ──────────────────────────────────────────────────────────────
   //
@@ -232,13 +246,13 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const { store, catalog, kind } = await resolveStore(env);
-  const { app } = await createApp(env, store, kind, catalog);
+  const { store, catalog, invoices, kind } = await resolveStore(env);
+  const { app } = await createApp(env, store, kind, catalog, invoices);
 
   app.listen(env.PORT, () => {
     logger.info(
       { puerto: env.PORT, almacen: kind, versionApiShopify: env.SHOPIFY_API_VERSION },
-      'Mundo Love Pet — Shopify × Bsale · Fase 1 en marcha',
+      'Mundo Love Pet — Shopify × Bsale en marcha',
     );
   });
 }
