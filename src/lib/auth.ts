@@ -96,6 +96,19 @@ export function leerCredenciales(cabecera: string | undefined): { usuario: strin
   }
 }
 
+/**
+ * La cabecera que hace que el navegador pida usuario y contraseña.
+ *
+ * **Sólo ASCII.** Las cabeceras HTTP no admiten otra cosa, y Node no lo avisa:
+ * lanza `ERR_INVALID_CHAR` al responder y la petición muere con un 500 que no
+ * menciona la cabecera por ningún sitio.
+ *
+ * Aquí ya pasó una vez, con un guion largo en «Mundo Love Pet — Bsale». La
+ * prueba de `auth.test.ts` que comprueba que esta constante es ASCII está para
+ * que no vuelva a pasar.
+ */
+export const CABECERA_AUTENTICACION = 'Basic realm="Mundo Love Pet - Bsale", charset="UTF-8"';
+
 /** El HTML del panel, no la API ni los datos. */
 function esPaginaDelPanel(path: string): boolean {
   return path === '/' || path === '/index.html';
@@ -160,9 +173,8 @@ export function requiereClave(opciones: OpcionesAuth) {
       }
     }
 
-    res
-      .status(401)
-      .set('WWW-Authenticate', 'Basic realm="Mundo Love Pet — Bsale", charset="UTF-8"')
-      .json({ error: { message: 'Hace falta identificarse.' } });
+    res.status(401).set('WWW-Authenticate', CABECERA_AUTENTICACION).json({
+      error: { message: 'Hace falta identificarse.' },
+    });
   };
 }

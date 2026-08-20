@@ -6,7 +6,7 @@
  * que el camino feliz funciona.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { requiereClave, leerCredenciales } from '../src/lib/auth.js';
+import { requiereClave, leerCredenciales, CABECERA_AUTENTICACION } from '../src/lib/auth.js';
 
 const USUARIO = 'rolando';
 const CLAVE = 'una-clave-larga-de-verdad';
@@ -78,6 +78,21 @@ describe('requiereClave', () => {
         expect(next).not.toHaveBeenCalled();
         expect(res.status).toHaveBeenCalledWith(401);
       });
+    }
+  });
+
+  /**
+   * Esto llegó a producción y tumbó el servicio entero: la cabecera llevaba un
+   * guion largo («—»), y las cabeceras HTTP sólo admiten ASCII. Node no avisa
+   * al escribirla: lanza ERR_INVALID_CHAR al responder, y la petición muere con
+   * un 500 que no menciona la cabecera por ningún lado.
+   *
+   * Las pruebas no lo cogieron porque el `res.set` simulado acepta cualquier
+   * cosa. Ésta comprueba la constante directamente.
+   */
+  it('la cabecera WWW-Authenticate es ASCII puro, o Node tumba la respuesta', () => {
+    for (const caracter of CABECERA_AUTENTICACION) {
+      expect(caracter.codePointAt(0)).toBeLessThan(128);
     }
   });
 
