@@ -17,6 +17,7 @@ import type { Env } from '../config/env.js';
 import type { ConnectionService } from '../services/connection.service.js';
 import type { CatalogStore } from '../db/catalog.store.js';
 import { compararCatalogos } from '../services/matching.service.js';
+import { normalizarSku } from '../services/catalog.service.js';
 import {
   planificar,
   aplicarStock,
@@ -231,7 +232,22 @@ export function syncRouter(service: ConnectionService, store: CatalogStore, env:
         variantes,
       );
 
-      const plan = planificarCreacion(guardados, informe.soloEnBsale, limite);
+      // Todos los códigos que Shopify ya conoce, de sus dos campos. Es la red
+      // de seguridad contra duplicados: ver `planificarCreacion`.
+      const codigosEnShopify = new Set<string>();
+      for (const v of variantes) {
+        const sku = normalizarSku(v.sku);
+        const barcode = normalizarSku(v.barcode);
+        if (sku) codigosEnShopify.add(sku);
+        if (barcode) codigosEnShopify.add(barcode);
+      }
+
+      const plan = planificarCreacion(
+        guardados,
+        informe.soloEnBsale,
+        limite,
+        codigosEnShopify,
+      );
 
       if (!aplicar) {
         return res.json({

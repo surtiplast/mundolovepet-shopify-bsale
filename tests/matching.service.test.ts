@@ -140,7 +140,7 @@ describe('compararCatalogos', () => {
 
       expect(informe.soloEnBsale).toEqual(['SOLO-BSALE']);
       expect(informe.soloEnShopify).toEqual(['solo-shopify']);
-      expect(informe.advertencias.join(' ')).toMatch(/no se crean|no los crea/i);
+      expect(informe.advertencias.join(' ')).toMatch(/no aparecen en Shopify/i);
     });
 
     it('cuenta las variantes de Shopify sin código y avisa', () => {
@@ -188,5 +188,111 @@ describe('compararCatalogos', () => {
 
       expect(informe.emparejados[0]!.shopifyInventoryItemId).toBe('gid://inv/99');
     });
+  });
+});
+
+/**
+ * ── El fallo de los SKU duplicados ──────────────────────────────────────────
+ *
+ * `soloEnBsale` es lo que el alta de productos usa para decidir qué crear. Si
+ * ahí aparece algo que en realidad ya está en Shopify, se crea otra vez y queda
+ * el SKU duplicado en la tienda.
+ *
+ * Pasaba porque la comparación miraba UN solo campo —el recomendado— e ignoraba
+ * el otro. Un producto con el código en `barcode` y el `sku` vacío se daba por
+ * ausente y se duplicaba.
+ */
+describe('no dar por ausente lo que ya está en Shopify', () => {
+  it('un producto que en Shopify sólo tiene el código en barcode NO se propone para crear', () => {
+    const informe = compararCatalogos(
+      [b('AAA-1'), b('AAA-2'), b('SOLO-EN-BSALE')],
+      [
+        // Estos dos hacen que gane el SKU como campo recomendado.
+        s('gid://1', { sku: 'AAA-1', barcode: null }),
+        s('gid://2', { sku: 'AAA-2', barcode: null }),
+        // Éste tiene el código en el otro campo. Antes se duplicaba.
+        s('gid://3', { sku: null, barcode: 'SOLO-EN-BSALE' }),
+      ],
+    );
+
+    expect(informe.campoRecomendado).toBe('sku');
+    expect(informe.soloEnBsale).toEqual([]);
+    expect(informe.rescatadosPorElOtroCampo).toBe(1);
+  });
+
+  it('y al revés: si gana barcode, uno que sólo tiene sku tampoco se propone', () => {
+    const informe = compararCatalogos(
+      [b('BBB-1'), b('BBB-2'), b('POR-SKU')],
+      [
+        s('gid://1', { sku: null, barcode: 'BBB-1' }),
+        s('gid://2', { sku: null, barcode: 'BBB-2' }),
+        s('gid://3', { sku: 'POR-SKU', barcode: null }),
+      ],
+    );
+
+    expect(informe.campoRecomendado).toBe('barcode');
+    expect(informe.soloEnBsale).toEqual([]);
+    expect(informe.rescatadosPorElOtroCampo).toBe(1);
+  });
+
+  it('lo que de verdad no está sigue apareciendo como ausente', () => {
+    const informe = compararCatalogos(
+      [b('EXISTE'), b('NO-EXISTE')],
+      [s('gid://1', { sku: 'EXISTE', barcode: null })],
+    );
+
+    expect(informe.soloEnBsale).toEqual(['NO-EXISTE']);
+  });
+
+  it('avisa de cuántos duplicados se han evitado', () => {
+    // Dos por SKU y dos por código de barras: empate, y en el empate gana `sku`.
+    // Los dos que sólo tienen código de barras son los rescatados.
+    const informe = compararCatalogos(
+      [b('A'), b('B'), b('C'), b('D')],
+      [
+        s('gid://1', { sku: 'A', barcode: null }),
+        s('gid://2', { sku: 'B', barcode: null }),
+        s('gid://3', { sku: null, barcode: 'C' }),
+        s('gid://4', { sku: null, barcode: 'D' }),
+      ],
+    );
+
+    expect(informe.campoRecomendado).toBe('sku');
+    expect(informe.rescatadosPorElOtroCampo).toBe(2);
+    expect(informe.advertencias.join(' ')).toMatch(/duplicados/i);
+  });
+
+  it('el emparejado apunta a la variante correcta, la que tenía el código', () => {
+    const informe = compararCatalogos(
+      [b('X'), b('RESCATADO')],
+      [
+        s('gid://1', { sku: 'X', barcode: null }),
+        s('gid://rescatada', { sku: null, barcode: 'RESCATADO' }),
+      ],
+    );
+
+    const encontrado = informe.emparejados.find((e) => e.codigo === 'RESCATADO');
+    expect(encontrado?.shopifyVariantId).toBe('gid://rescatada');
+  });
+
+  it('una variante sin ninguno de los dos códigos sí cuenta como sin código', () => {
+    const informe = compararCatalogos(
+      [b('A')],
+      [s('gid://1', { sku: 'A', barcode: null }), s('gid://2', { sku: null, barcode: null })],
+    );
+
+    expect(informe.shopifySinCodigo).toBe(1);
+  });
+
+  it('no marca como huérfano lo que está en Bsale por el otro campo', () => {
+    const informe = compararCatalogos(
+      [b('A'), b('POR-BARCODE')],
+      [
+        s('gid://1', { sku: 'A', barcode: null }),
+        s('gid://2', { sku: null, barcode: 'POR-BARCODE' }),
+      ],
+    );
+
+    expect(informe.soloEnShopify).toEqual([]);
   });
 });

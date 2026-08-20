@@ -57,8 +57,15 @@ export interface InformeEmparejamiento {
   soloEnBsale: string[];
   /** En Shopify pero no en Bsale: quedarían huérfanos, sin stock que sincronizar. */
   soloEnShopify: string[];
-  /** Variantes de Shopify sin ningún código en el campo elegido. */
+  /** Variantes de Shopify sin código en NINGUNO de los dos campos. */
   shopifySinCodigo: number;
+  /**
+   * Emparejados gracias a mirar el campo que no era el recomendado.
+   *
+   * Es la cifra de duplicados evitados: cada uno de estos se habría vuelto a
+   * crear si sólo se mirara un campo.
+   */
+  rescatadosPorElOtroCampo: number;
   conDiferencias: number;
   advertencias: string[];
 }
@@ -90,13 +97,35 @@ export function compararCatalogos(
   // que el comerciante espera revisar.
   const campoRecomendado: CampoEmparejamiento =
     aciertosBarcode > aciertosSku ? 'barcode' : 'sku';
-  const indice = campoRecomendado === 'barcode' ? porBarcode : porSku;
+
+  // ── Se busca en LOS DOS campos, no sólo en el recomendado ──────────────────
+  //
+  // El campo recomendado decide cuál se prueba PRIMERO, no cuál es el único que
+  // cuenta. Un producto puede tener el código en `sku` y otro en `barcode`
+  // dentro de la misma tienda; mirar sólo uno deja ciego al otro.
+  //
+  // Esto importa muchísimo porque `soloEnBsale` es lo que el alta de productos
+  // usa para decidir qué crear. Cuando un producto existía en Shopify con el
+  // código en `barcode` y el `sku` vacío, buscar sólo por `sku` lo daba por
+  // ausente y **lo creaba otra vez**: SKU duplicado en la tienda.
+  //
+  // Ante la duda se prefiere NO crear. Un producto que falta se crea con otra
+  // pulsación; uno duplicado hay que buscarlo y borrarlo a mano.
+  const primero = campoRecomendado === 'barcode' ? porBarcode : porSku;
+  const segundo = campoRecomendado === 'barcode' ? porSku : porBarcode;
 
   const emparejados: Emparejado[] = [];
   const soloEnBsale: string[] = [];
+  /** Cuántos se salvaron de duplicarse gracias a mirar el segundo campo. */
+  let rescatadosPorElOtroCampo = 0;
 
   for (const [clave, b] of codigosBsale) {
-    const s = indice.get(clave);
+    let s = primero.get(clave);
+    if (!s) {
+      s = segundo.get(clave);
+      if (s) rescatadosPorElOtroCampo++;
+    }
+
     if (!s) {
       soloEnBsale.push(b.sku);
       continue;
@@ -128,12 +157,21 @@ export function compararCatalogos(
   let shopifySinCodigo = 0;
 
   for (const s of shopify) {
-    const clave = normalizarSku(campoRecomendado === 'barcode' ? s.barcode : s.sku);
+    // Igual que arriba: una variante «sin código» lo es cuando no tiene NINGUNO
+    // de los dos, no cuando le falta el recomendado.
+    const porElRecomendado = normalizarSku(campoRecomendado === 'barcode' ? s.barcode : s.sku);
+    const porElOtro = normalizarSku(campoRecomendado === 'barcode' ? s.sku : s.barcode);
+    const clave = porElRecomendado || porElOtro;
+
     if (!clave) {
       shopifySinCodigo++;
       continue;
     }
-    if (!clavesBsale.has(clave)) soloEnShopify.push(clave);
+    // Se considera conocida si CUALQUIERA de sus dos códigos está en Bsale.
+    const conocida =
+      (porElRecomendado && clavesBsale.has(porElRecomendado)) ||
+      (porElOtro && clavesBsale.has(porElOtro));
+    if (!conocida) soloEnShopify.push(clave);
   }
 
   const advertencias: string[] = [];
@@ -156,9 +194,17 @@ export function compararCatalogos(
     );
   }
 
+  if (rescatadosPorElOtroCampo > 0) {
+    advertencias.push(
+      `${rescatadosPorElOtroCampo} productos se encontraron en Shopify por el otro campo ` +
+        `(${campoRecomendado === 'barcode' ? 'SKU' : 'código de barras'}). Sin esa segunda ` +
+        'búsqueda se habrían dado por ausentes y se habrían creado duplicados.',
+    );
+  }
+
   if (soloEnBsale.length > 0) {
     advertencias.push(
-      `${soloEnBsale.length} productos existen en Bsale pero no en Shopify. La Fase 3 no los crea: sólo actualiza los que ya existen.`,
+      `${soloEnBsale.length} productos existen en Bsale y no aparecen en Shopify por ninguno de los dos campos.`,
     );
   }
 
@@ -172,6 +218,7 @@ export function compararCatalogos(
     soloEnBsale,
     soloEnShopify,
     shopifySinCodigo,
+    rescatadosPorElOtroCampo,
     conDiferencias: emparejados.filter((e) => e.difierePrecio || e.difiereStock).length,
     advertencias,
   };

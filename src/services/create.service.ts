@@ -42,6 +42,8 @@ export interface PlanCreacion {
     total: number;
     sinNombre: number;
     sinPrecio: number;
+    /** Ya existían en Shopify pese a venir marcados como ausentes. */
+    yaExistian: number;
   };
 }
 
@@ -62,6 +64,23 @@ export function planificarCreacion(
   catalogo: ProductoGuardado[],
   soloEnBsale: string[],
   limite?: number,
+  /**
+   * Todos los códigos que ya existen en Shopify, de SUS DOS campos —`sku` y
+   * `barcode`— ya normalizados.
+   *
+   * ── Por qué esta comprobación existe si `soloEnBsale` ya debería bastar ────
+   *
+   * Porque una vez no bastó. El emparejamiento miraba un solo campo, y los
+   * productos que en Shopify tenían el código en `barcode` con el `sku` vacío
+   * se daban por ausentes y se creaban otra vez, duplicando el SKU en la
+   * tienda.
+   *
+   * Aquello se arregló en `compararCatalogos`, pero esta segunda comprobación
+   * se queda: crear un duplicado obliga a buscarlo y borrarlo a mano, mientras
+   * que no crear algo se resuelve con otra pulsación. Cuando el coste de los
+   * dos errores es tan distinto, conviene comprobar dos veces.
+   */
+  codigosEnShopify?: Set<string>,
 ): PlanCreacion {
   const faltantes = new Set(soloEnBsale.map((s) => normalizarSku(s)));
 
@@ -73,6 +92,16 @@ export function planificarCreacion(
 
     const clave = normalizarSku(p.sku);
     if (!clave || !faltantes.has(clave)) continue;
+
+    // La red de seguridad. Si el código ya está en la tienda por cualquiera de
+    // los dos campos, no se crea nada aunque el informe dijera que falta.
+    if (codigosEnShopify?.has(clave)) {
+      omitidos.push({
+        sku: p.sku,
+        motivo: 'Ya existe en Shopify (por SKU o código de barras). No se crea para no duplicarlo.',
+      });
+      continue;
+    }
 
     const titulo = p.name?.trim();
     if (!titulo) {
@@ -109,6 +138,7 @@ export function planificarCreacion(
       total: candidatos.length,
       sinNombre: omitidos.filter((o) => o.motivo.includes('nombre')).length,
       sinPrecio: omitidos.filter((o) => o.motivo.includes('precio')).length,
+      yaExistian: omitidos.filter((o) => o.motivo.includes('Ya existe')).length,
     },
   };
 }

@@ -248,3 +248,51 @@ describe('crearProductos', () => {
     expect(r.ids).toEqual(['gid://shopify/Product/1']);
   });
 });
+
+/**
+ * La red de seguridad. Aunque el informe diga que un producto falta, si su
+ * código ya está en Shopify no se crea: un duplicado hay que buscarlo y
+ * borrarlo a mano, mientras que no crear algo se arregla con otra pulsación.
+ */
+describe('nunca crear algo cuyo código ya está en Shopify', () => {
+  it('lo omite aunque venga marcado como ausente', () => {
+    const plan = planificarCreacion(
+      [prod({ sku: 'YA-ESTA' })],
+      ['YA-ESTA'],
+      undefined,
+      new Set(['ya-esta']),
+    );
+
+    expect(plan.candidatos).toHaveLength(0);
+    expect(plan.omitidos[0]!.motivo).toMatch(/ya existe/i);
+    expect(plan.resumen.yaExistian).toBe(1);
+  });
+
+  it('sirve tanto si el código está en el SKU como en el código de barras', () => {
+    // El conjunto lleva los códigos de LOS DOS campos, ya normalizados.
+    const plan = planificarCreacion(
+      [prod({ sku: 'POR-BARCODE' })],
+      ['POR-BARCODE'],
+      undefined,
+      new Set(['por-barcode']),
+    );
+
+    expect(plan.candidatos).toHaveLength(0);
+  });
+
+  it('los que de verdad faltan se siguen creando', () => {
+    const plan = planificarCreacion(
+      [prod({ sku: 'FALTA' }), prod({ sku: 'ESTA' })],
+      ['FALTA', 'ESTA'],
+      undefined,
+      new Set(['esta']),
+    );
+
+    expect(plan.candidatos.map((c) => c.sku)).toEqual(['FALTA']);
+  });
+
+  it('sin el conjunto se comporta como antes: no rompe nada', () => {
+    const plan = planificarCreacion([prod({ sku: 'X' })], ['X']);
+    expect(plan.candidatos).toHaveLength(1);
+  });
+});
