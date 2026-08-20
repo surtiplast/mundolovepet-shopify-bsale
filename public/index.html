@@ -15,6 +15,19 @@
      usuario y contraseña. -->
 <meta name="shopify-api-key" content="__SHOPIFY_API_KEY__">
 <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
+
+<!-- ── Tipografía ───────────────────────────────────────────────────────────
+     Inter es la que usa el admin de Shopify. Dentro del marco no se hereda
+     —cada iframe tiene su propio documento—, así que hay que cargarla aquí.
+
+     `preconnect` abre la conexión con el CDN antes de necesitarla: sin él, el
+     texto aparece primero con la fuente del sistema y salta al cambiar.
+
+     Los pesos son los tres que usa el panel: normal, medio y seminegrita.
+     Pedir toda la familia costaría varios cientos de kilobytes para nada. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root{
     --bg:#0f1115; --panel:#171a21; --panel-2:#1e222b; --line:#2a2f3a;
@@ -26,8 +39,15 @@
            --txt:#12141a; --muted:#606a7b; }
   }
   *{box-sizing:border-box}
+  /* La misma pila que el admin de Shopify: Inter delante y, si no llegara a
+     cargar, los tipos del sistema en el orden que ellos usan. Así el panel se
+     ve igual dentro del admin que por su URL. */
   body{margin:0;background:var(--bg);color:var(--txt);
-       font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+       font:14px/1.5 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,
+            "Helvetica Neue",sans-serif;
+       /* Shopify aprieta ligeramente el interletraje del cuerpo de texto. */
+       letter-spacing:-0.005em;
+       -webkit-font-smoothing:antialiased}
   a{color:var(--brand-2)}
   .wrap{max-width:1080px;margin:0 auto;padding:24px 20px 64px}
 
@@ -72,7 +92,7 @@
      que cambiar de pestaña «resucitara» tablas vacías. */
   .fuera-de-pestana{display:none !important}
   .tab-nota{color:var(--muted);font-size:13px;margin:0 0 14px;max-width:70ch}
-  button{font:inherit;font-size:13px;font-weight:550;cursor:pointer;
+  button{font:inherit;font-size:13px;font-weight:500;cursor:pointer;
          border:1px solid var(--line);background:var(--panel-2);color:var(--txt);
          padding:9px 15px;border-radius:9px;transition:.14s}
   button:hover:not(:disabled){border-color:var(--brand);transform:translateY(-1px)}

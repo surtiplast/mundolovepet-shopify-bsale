@@ -103,7 +103,12 @@ export async function createApp(
           // empaquetar, Shopify exige la versión servida desde su CDN para
           // poder actualizarla sin romper las apps.
           scriptSrc: ["'self'", "'unsafe-inline'", 'https://cdn.shopify.com'],
-          styleSrc: ["'self'", "'unsafe-inline'"],
+          // La hoja de estilos de Google Fonts, para Inter —la tipografía del
+          // admin de Shopify—. Sin esto el navegador la bloquea en silencio y
+          // el panel se ve con la fuente del sistema sin decir por qué.
+          styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+          // Y el fichero de la fuente, que se sirve desde otro dominio.
+          fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
           imgSrc: ["'self'", 'data:', 'https://cdn.shopify.com'],
           connectSrc: ["'self'", 'https://*.myshopify.com', 'https://admin.shopify.com'],
           objectSrc: ["'none'"],
