@@ -58,6 +58,27 @@
             background:var(--panel-2);padding:2px 7px;border-radius:6px;border:1px solid var(--line)}
 
   .actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:16px}
+
+  /* ── Pestañas ──────────────────────────────────────────────────────────────
+     Trece botones en una fila obligaban a leerlos todos para encontrar uno.
+     Agrupados por tarea, cada pestaña enseña sólo lo suyo. */
+  .tabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--line);
+        margin:0 0 18px}
+  .tab{appearance:none;border:0;background:none;color:var(--muted);cursor:pointer;
+       font:inherit;font-size:14px;padding:10px 14px;border-radius:8px 8px 0 0;
+       border-bottom:2px solid transparent;margin-bottom:-1px}
+  .tab:hover{color:var(--txt);background:var(--panel-2)}
+  .tab[aria-selected="true"]{color:var(--txt);border-bottom-color:var(--brand);
+                             font-weight:600}
+  .tab .cuenta{display:inline-block;margin-left:7px;font-size:11px;color:var(--muted);
+               background:var(--panel-2);border:1px solid var(--line);
+               border-radius:999px;padding:1px 7px}
+  .panel-tab[hidden]{display:none}
+  /* Ocultar por pestaña es distinto de ocultar por falta de datos: una sección
+     se ve sólo si pasa las dos cosas. Mezclarlas en el mismo `hidden` haría
+     que cambiar de pestaña «resucitara» tablas vacías. */
+  .fuera-de-pestana{display:none !important}
+  .tab-nota{color:var(--muted);font-size:13px;margin:0 0 14px;max-width:70ch}
   button{font:inherit;font-size:13px;font-weight:550;cursor:pointer;
          border:1px solid var(--line);background:var(--panel-2);color:var(--txt);
          padding:9px 15px;border-radius:9px;transition:.14s}
@@ -129,26 +150,72 @@
 
   <div id="banner"></div>
 
-  <div class="actions" style="margin:0 0 20px">
-    <button class="primary" id="btnAll">Probar ambas conexiones</button>
-    <button id="btnDiscover">Descubrir configuración de Bsale</button>
-    <button id="btnRefresh">Actualizar estado</button>
-    <button id="btnCatalog">Leer catálogo de Bsale</button>
-    <button id="btnMatch">Comparar con Shopify</button>
-    <button id="btnSimStock">Simular stock</button>
-    <button id="btnAplicarStock" class="peligro">Actualizar stock en Shopify</button>
-    <button id="btnSimPrecio">Simular precios</button>
-    <button id="btnAplicarPrecio" class="peligro">Actualizar precios en Shopify</button>
-    <button id="btnSimCrear">Simular alta de productos</button>
-    <button id="btnCrear" class="peligro">Crear productos en Shopify (borrador)</button>
-    <button id="btnSimReparar">Simular reparación</button>
-    <button id="btnReparar" class="peligro">Reparar código de barras y costo</button>
-    <button id="btnPedidos">Ver pedidos por facturar</button>
+  <!-- ── Pestañas ─────────────────────────────────────────────────────────────
+       Agrupadas por tarea, y en el orden en que se usan: primero se comprueba
+       la conexión, luego se lee el catálogo, luego se sincroniza, y al final
+       se factura. Los botones que ESCRIBEN en la tienda van en rojo. -->
+  <nav class="tabs" role="tablist">
+    <button class="tab" role="tab" data-tab="conexion" aria-selected="true">Conexión</button>
+    <button class="tab" role="tab" data-tab="catalogo" aria-selected="false">Catálogo</button>
+    <button class="tab" role="tab" data-tab="sincronizar" aria-selected="false">Sincronizar</button>
+    <button class="tab" role="tab" data-tab="productos" aria-selected="false">Productos nuevos</button>
+    <button class="tab" role="tab" data-tab="comprobantes" aria-selected="false">Comprobantes</button>
+  </nav>
+
+  <div class="panel-tab" data-panel="conexion">
+    <p class="tab-nota">Comprueba que Bsale y Shopify responden, y descubre los
+      identificadores de tu cuenta de Bsale.</p>
+    <div class="actions" style="margin:0 0 20px">
+      <button class="primary" id="btnAll">Probar ambas conexiones</button>
+      <button id="btnDiscover">Descubrir configuración de Bsale</button>
+      <button id="btnRefresh">Actualizar estado</button>
+    </div>
   </div>
 
-  <section class="grid" id="cards"></section>
+  <div class="panel-tab" data-panel="catalogo" hidden>
+    <p class="tab-nota">Lee el catálogo de Bsale y compáralo con lo que hay en
+      Shopify. Nada de esto modifica tu tienda.</p>
+    <div class="actions" style="margin:0 0 20px">
+      <button class="primary" id="btnCatalog">Leer catálogo de Bsale</button>
+      <button id="btnMatch">Comparar con Shopify</button>
+    </div>
+  </div>
 
-  <section id="pedidos" hidden>
+  <div class="panel-tab" data-panel="sincronizar" hidden>
+    <p class="tab-nota">Lleva el stock y los precios de Bsale a Shopify.
+      <strong>Simula primero:</strong> el botón rojo escribe de verdad.</p>
+    <div class="actions" style="margin:0 0 20px">
+      <button class="primary" id="btnSimStock">Simular stock</button>
+      <button id="btnAplicarStock" class="peligro">Actualizar stock en Shopify</button>
+      <button id="btnSimPrecio">Simular precios</button>
+      <button id="btnAplicarPrecio" class="peligro">Actualizar precios en Shopify</button>
+    </div>
+  </div>
+
+  <div class="panel-tab" data-panel="productos" hidden>
+    <p class="tab-nota">Crea en Shopify los productos que sólo existen en Bsale
+      —siempre como borrador— y corrige el código de barras y el costo de los
+      que se crearon mal.</p>
+    <div class="actions" style="margin:0 0 20px">
+      <button class="primary" id="btnSimCrear">Simular alta de productos</button>
+      <button id="btnCrear" class="peligro">Crear productos en Shopify (borrador)</button>
+      <button id="btnSimReparar">Simular reparación</button>
+      <button id="btnReparar" class="peligro">Reparar código de barras y costo</button>
+    </div>
+  </div>
+
+  <div class="panel-tab" data-panel="comprobantes" hidden>
+    <p class="tab-nota">Boletas y facturas de los pedidos pagados.
+      <strong>Emitir declara ante SUNAT y no se deshace:</strong> revisa cada
+      uno antes.</p>
+    <div class="actions" style="margin:0 0 20px">
+      <button class="primary" id="btnPedidos">Ver pedidos por facturar</button>
+    </div>
+  </div>
+
+  <section class="grid" id="cards" data-tabs="conexion"></section>
+
+  <section id="pedidos" data-tabs="comprobantes" hidden>
     <h2 class="cat-titulo">Pedidos por facturar</h2>
     <div id="pedResumen" class="cat-resumen"></div>
     <div class="cat-tabla-scroll">
@@ -164,7 +231,7 @@
     </div>
   </section>
 
-  <section id="sync" hidden>
+  <section id="sync" data-tabs="sincronizar productos" hidden>
     <h2 class="cat-titulo">Sincronización</h2>
     <div id="syncResumen" class="cat-resumen"></div>
     <div class="cat-tabla-scroll" id="syncTablaCaja" hidden>
@@ -177,7 +244,7 @@
     </div>
   </section>
 
-  <section id="match" hidden>
+  <section id="match" data-tabs="catalogo" hidden>
     <h2 class="cat-titulo">Emparejamiento con Shopify</h2>
     <div id="matchResumen" class="cat-resumen"></div>
     <div id="matchAvisos"></div>
@@ -198,7 +265,7 @@
     </div>
   </section>
 
-  <section id="catalogo" hidden>
+  <section id="catalogo" data-tabs="catalogo" hidden>
     <h2 class="cat-titulo">Catálogo de Bsale</h2>
     <div id="catResumen" class="cat-resumen"></div>
     <div class="cat-filtros">
@@ -1019,6 +1086,44 @@ async function emitirComprobante(id, nombre, boton) {
 }
 
 $('btnPedidos').onclick = (e) => verPedidos(e.target);
+
+/* ── Pestañas ────────────────────────────────────────────────────────────────
+
+   Cada sección declara en `data-tabs` a qué pestañas pertenece; `#sync` está en
+   dos porque lo comparten la sincronización y el alta de productos.
+
+   Se distingue «oculto por pestaña» de «oculto porque no hay datos». El segundo
+   lo maneja el atributo `hidden` de cada función; el primero, la clase
+   `.fuera-de-pestana`. Si se usara `hidden` para las dos cosas, cambiar de
+   pestaña mostraría tablas vacías de resultados que nunca se pidieron. */
+function mostrarPestana(nombre) {
+  for (const tab of document.querySelectorAll('.tab')) {
+    tab.setAttribute('aria-selected', String(tab.dataset.tab === nombre));
+  }
+  for (const panel of document.querySelectorAll('.panel-tab')) {
+    panel.hidden = panel.dataset.panel !== nombre;
+  }
+  for (const seccion of document.querySelectorAll('[data-tabs]')) {
+    const suyas = seccion.dataset.tabs.split(' ');
+    seccion.classList.toggle('fuera-de-pestana', !suyas.includes(nombre));
+  }
+  // Sobrevive a recargas: dentro de Shopify el marco se recarga a menudo y
+  // volver siempre a «Conexión» obligaría a navegar de nuevo cada vez.
+  try { localStorage.setItem('pestana', nombre); } catch { /* sin almacenamiento */ }
+}
+
+for (const tab of document.querySelectorAll('.tab')) {
+  tab.onclick = () => mostrarPestana(tab.dataset.tab);
+}
+
+let pestanaGuardada = 'conexion';
+try {
+  const guardada = localStorage.getItem('pestana');
+  if (guardada && document.querySelector(`.tab[data-tab="${guardada}"]`)) {
+    pestanaGuardada = guardada;
+  }
+} catch { /* sin almacenamiento */ }
+mostrarPestana(pestanaGuardada);
 
 refresh();
 </script>
