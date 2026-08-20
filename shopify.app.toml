@@ -1,0 +1,53 @@
+### Configuración de la app en Shopify
+###
+### Este fichero describe la app para que aparezca en «Aplicaciones» dentro del
+### admin de tu tienda y se abra ahí, en vez de tener que ir a la URL de Render.
+###
+### ── Antes de usarlo, rellena dos cosas ──────────────────────────────────────
+###
+###   client_id        el Client ID de la app, en el Dev Dashboard
+###   application_url  la URL de tu servicio en Render
+###
+### Están marcadas con RELLENAR. Si subes esto sin rellenarlas, la app no cargará.
+###
+### ── Cómo aplicarlo ──────────────────────────────────────────────────────────
+###
+### También puedes poner todo esto a mano en el Dev Dashboard, sin la CLI:
+###   Dev Dashboard → tu app → Configuration
+###     · App URL                → la misma que `application_url`
+###     · Embedded               → activado
+###     · Allowed redirection    → las mismas que `redirect_urls`
+###
+### Es lo más rápido si no tienes la Shopify CLI instalada.
+
+client_id = "RELLENAR-el-client-id-del-dev-dashboard"
+name = "Mundo Love Pet — Bsale"
+handle = "mundolovepet-bsale"
+application_url = "https://RELLENAR-tu-servicio.onrender.com"
+
+# La clave de todo esto. `true` hace que la app se abra DENTRO del admin, en un
+# marco, con su token de sesión. Con `false` Shopify la abriría en una pestaña
+# aparte y no habría token: volveríamos a depender sólo de la contraseña.
+embedded = true
+
+[access_scopes]
+# Los mismos que ya usa la app. Principio de privilegio mínimo: sólo lo que
+# hace falta para leer el catálogo, sincronizar precios y stock, crear
+# productos y leer los pedidos que se van a facturar.
+scopes = "read_products,write_products,read_inventory,write_inventory,read_orders"
+
+[auth]
+# Shopify exige al menos una URL de redirección aunque la app no haga el flujo
+# OAuth clásico. Debe estar bajo el mismo dominio que `application_url`.
+redirect_urls = [
+  "https://RELLENAR-tu-servicio.onrender.com/api/auth/callback",
+]
+
+[webhooks]
+api_version = "2026-07"
+
+[build]
+# La app NO se genera con la Shopify CLI: es un servidor Express propio. Con
+# esto se le dice a la CLI que no intente construir nada ni inyectar variables.
+automatically_update_urls_on_dev = false
+include_config_on_deploy = true

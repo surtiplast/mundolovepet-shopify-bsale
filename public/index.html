@@ -4,6 +4,15 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Mundo Love Pet — Shopify × Bsale</title>
+
+<!-- ── App Bridge ──────────────────────────────────────────────────────────
+     Hace que la app funcione dentro de Aplicaciones en el admin de Shopify.
+     La clave la escribe el servidor al servir esta página; el marcador
+     __SHOPIFY_API_KEY__ se sustituye ahí. Fuera de Shopify no estorba: el
+     script no encuentra un marco padre y el panel sigue funcionando con
+     usuario y contraseña. -->
+<meta name="shopify-api-key" content="__SHOPIFY_API_KEY__">
+<script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
 <style>
   :root{
     --bg:#0f1115; --panel:#171a21; --panel-2:#1e222b; --line:#2a2f3a;
@@ -225,6 +234,37 @@
 </div>
 
 <script>
+/* ── Autenticación ───────────────────────────────────────────────────────────
+
+   Dentro del admin de Shopify, App Bridge deja una variable global `shopify` y
+   `shopify.idToken()` devuelve un token de sesión firmado. Se manda en cada
+   llamada y el servidor lo verifica con el Client Secret.
+
+   El token dura UN MINUTO, así que se pide en cada petición en vez de
+   guardarlo: cachearlo daría 401 al minuto de tener la pestaña abierta.
+
+   Fuera de Shopify no existe `shopify`, no se manda cabecera, y el navegador
+   habrá pedido ya usuario y contraseña al cargar la página. En los dos casos
+   el resto del panel llama a `pedir()` sin enterarse de la diferencia. */
+const dentroDeShopify = () => typeof shopify !== 'undefined' && typeof shopify.idToken === 'function';
+
+async function pedir(url, opciones = {}) {
+  const cabeceras = { ...(opciones.headers || {}) };
+
+  if (dentroDeShopify()) {
+    try {
+      cabeceras.Authorization = `Bearer ${await shopify.idToken()}`;
+    } catch (err) {
+      // Si App Bridge falla, se sigue sin cabecera: el servidor responderá 401
+      // y el navegador pedirá usuario y contraseña. Mejor eso que una pantalla
+      // en blanco sin explicación.
+      console.warn('No se pudo obtener el token de sesión de Shopify:', err);
+    }
+  }
+
+  return fetch(url, { ...opciones, headers: cabeceras });
+}
+
 const $ = (id) => document.getElementById(id);
 const out = $('output');
 
@@ -273,7 +313,7 @@ function renderCards(connections) {
 
 async function refresh() {
   try {
-    const res = await fetch('/api/connections');
+    const res = await pedir('/api/connections');
     const data = await res.json();
     renderCards(data.connections);
   } catch {
@@ -290,7 +330,7 @@ async function testOne(provider) {
   setBusy(provider);
   const path = provider === 'BSALE' ? 'bsale' : 'shopify';
   try {
-    const res = await fetch(`/api/connections/${path}/test`, { method: 'POST' });
+    const res = await pedir(`/api/connections/${path}/test`, { method: 'POST' });
     const data = await res.json();
     show(data);
     banner(data.ok ? 'ok' : 'err',
@@ -305,7 +345,7 @@ $('btnAll').onclick = async (e) => {
   e.target.disabled = true;
   ['BSALE', 'SHOPIFY'].forEach(setBusy);
   try {
-    const res = await fetch('/api/connections/test-all', { method: 'POST' });
+    const res = await pedir('/api/connections/test-all', { method: 'POST' });
     const data = await res.json();
     show(data);
     const fallos = (data.results || []).filter((r) => !r.ok).map((r) => r.provider);
@@ -322,7 +362,7 @@ $('btnAll').onclick = async (e) => {
 $('btnDiscover').onclick = async (e) => {
   e.target.disabled = true;
   try {
-    const res = await fetch('/api/connections/bsale/discover');
+    const res = await pedir('/api/connections/bsale/discover');
     const data = await res.json();
     show(data);
     banner(res.ok ? 'ok' : 'err',
@@ -341,7 +381,7 @@ function show(data) {
   out.classList.add('show');
 }
 
-fetch('/api/health').then((r) => r.json()).then((h) => {
+pedir('/api/health').then((r) => r.json()).then((h) => {
   $('health').textContent =
     `Servicio ${h.status} · almacén: ${h.almacen} · Shopify API ${h.versionApiShopify}`;
 }).catch(() => { $('health').textContent = 'Servicio no disponible'; });
@@ -424,7 +464,7 @@ $('btnCatalog').onclick = async (e) => {
   const textoOriginal = e.target.textContent;
   e.target.textContent = 'Leyendo catálogo…';
   try {
-    const res = await fetch('/api/catalog/read', { method: 'POST' });
+    const res = await pedir('/api/catalog/read', { method: 'POST' });
     const data = await res.json();
     if (!res.ok) {
       banner('err', data.error?.message || 'No se pudo leer el catálogo.');
@@ -453,7 +493,7 @@ $('catBuscar').oninput = pintarTabla;
 $('catSoloProblemas').onchange = pintarTabla;
 
 /* Al abrir el panel se muestra lo último leído, sin tocar Bsale. */
-fetch('/api/catalog').then((r) => r.json()).then((d) => {
+pedir('/api/catalog').then((r) => r.json()).then((d) => {
   if (!d.items || d.items.length === 0) return;
   catalogo = d.items.map((i) => ({
     sku: i.sku, nombre: i.name, precio: i.bsalePrice, stock: i.bsaleStock, problemas: [],
@@ -550,7 +590,7 @@ $('btnMatch').onclick = async (e) => {
   const textoOriginal = e.target.textContent;
   e.target.textContent = 'Comparando…';
   try {
-    const res = await fetch('/api/catalog/match', { method: 'POST' });
+    const res = await pedir('/api/catalog/match', { method: 'POST' });
     const data = await res.json();
     if (!res.ok) {
       banner('err', data.error?.message || 'No se pudo comparar.');
@@ -628,7 +668,7 @@ async function sincronizar(tipo, aplicar, boton) {
     const url = aplicar
       ? `/api/sync/apply?tipo=${tipo}&confirmar=si`
       : `/api/sync/preview?tipo=${tipo}`;
-    const res = await fetch(url, { method: 'POST' });
+    const res = await pedir(url, { method: 'POST' });
     const data = await res.json();
 
     if (!res.ok) {
@@ -670,7 +710,7 @@ async function confirmarYAplicar(tipo, boton) {
   const original = boton.textContent;
   boton.textContent = 'Calculando…';
   try {
-    const res = await fetch(`/api/sync/preview?tipo=${tipo}`, { method: 'POST' });
+    const res = await pedir(`/api/sync/preview?tipo=${tipo}`, { method: 'POST' });
     const data = await res.json();
     if (!res.ok) {
       banner('err', data.error?.message || 'No se pudo calcular.');
@@ -715,7 +755,7 @@ async function altaProductos(aplicar, boton) {
   boton.textContent = aplicar ? 'Creando…' : 'Calculando…';
   try {
     const url = aplicar ? '/api/sync/crear?confirmar=si' : '/api/sync/crear';
-    const res = await fetch(url, { method: 'POST' });
+    const res = await pedir(url, { method: 'POST' });
     const data = await res.json();
 
     if (!res.ok) {
@@ -763,7 +803,7 @@ $('btnCrear').onclick = async (e) => {
   const original = e.target.textContent;
   e.target.textContent = 'Calculando…';
   try {
-    const res = await fetch('/api/sync/crear', { method: 'POST' });
+    const res = await pedir('/api/sync/crear', { method: 'POST' });
     const data = await res.json();
     e.target.disabled = false;
     e.target.textContent = original;
@@ -801,7 +841,7 @@ async function repararProductos(aplicar, boton) {
   boton.textContent = aplicar ? 'Reparando…' : 'Revisando…';
   try {
     const url = aplicar ? '/api/sync/reparar?confirmar=si' : '/api/sync/reparar';
-    const res = await fetch(url, { method: 'POST' });
+    const res = await pedir(url, { method: 'POST' });
     const data = await res.json();
 
     if (!res.ok) {
@@ -851,7 +891,7 @@ $('btnReparar').onclick = async (e) => {
   const original = e.target.textContent;
   e.target.textContent = 'Revisando…';
   try {
-    const res = await fetch('/api/sync/reparar', { method: 'POST' });
+    const res = await pedir('/api/sync/reparar', { method: 'POST' });
     const data = await res.json();
     e.target.disabled = false;
     e.target.textContent = original;
@@ -896,7 +936,7 @@ async function verPedidos(boton) {
   const original = boton.textContent;
   boton.textContent = 'Leyendo…';
   try {
-    const res = await fetch('/api/pedidos?limite=50');
+    const res = await pedir('/api/pedidos?limite=50');
     const data = await res.json();
 
     if (!res.ok) {
@@ -951,7 +991,7 @@ async function emitirComprobante(id, nombre, boton) {
   const original = boton.textContent;
   boton.textContent = 'Emitiendo…';
   try {
-    const res = await fetch(`/api/pedidos/${encodeURIComponent(id)}/emitir?confirmar=si`, { method: 'POST' });
+    const res = await pedir(`/api/pedidos/${encodeURIComponent(id)}/emitir?confirmar=si`, { method: 'POST' });
     const data = await res.json();
 
     if (!res.ok) {
