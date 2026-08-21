@@ -50,6 +50,15 @@ export interface ConfigComprobante {
   tasaIgv: number;
   /** Si se descuenta stock en Bsale al emitir. */
   descontarStock: boolean;
+  /**
+   * Si Bsale manda el comprobante por correo al cliente.
+   *
+   * Lo envía Bsale, no esta app: su API acepta `sendEmail` al emitir y usa su
+   * propia plantilla y su remitente ya configurado. Montar un envío propio
+   * exigiría contratar un servicio de correo y pelear con la reputación del
+   * dominio para no acabar en spam, y competiría con el suyo.
+   */
+  enviarCorreo: boolean;
 }
 
 export interface PlanComprobante {
@@ -78,6 +87,21 @@ const TOLERANCIA = 0.02;
 /** La clave anti-duplicado. Determinista: el mismo pedido da siempre la misma. */
 export function claveIdempotencia(pedido: PedidoShopify): string {
   return `shopify-order-${pedido.legacyId}`;
+}
+
+/**
+ * El correo al que mandar el comprobante.
+ *
+ * Se prefiere el del cliente registrado sobre el del pedido: son casi siempre
+ * el mismo, pero si difieren, el de la ficha del cliente es el que él mantiene
+ * al día.
+ */
+export function correoDelCliente(pedido: PedidoShopify): string | null {
+  const correo = pedido.cliente?.email?.trim() || pedido.email?.trim() || null;
+  // Una comprobación mínima. No se valida a fondo a propósito: Shopify ya exige
+  // un correo válido en el checkout, y rechazar aquí por un formato raro
+  // impediría emitir un comprobante que sí es correcto.
+  return correo && correo.includes('@') ? correo : null;
 }
 
 function redondear(valor: number, decimales = 6): number {
@@ -228,6 +252,10 @@ export function planificarComprobante(
     ],
     salesId: claveIdempotencia(pedido),
     dispatch: config.descontarStock ? 1 : 0,
+    // Bsale manda el comprobante al correo del cliente. Se pone sólo si hay
+    // correo que usar: pedírselo sin destinatario no haría nada, pero deja un
+    // rastro confuso en Bsale de envíos que nunca salieron.
+    ...(config.enviarCorreo && correoDelCliente(pedido) ? { sendEmail: 1 as const } : {}),
   };
 
   return { pedido, decision, documento, motivos, avisos, resumen };
@@ -288,7 +316,9 @@ export async function emitirComprobante(
           company: esEmpresa ? identificacion.razonSocial || nombreCompleto || null : null,
           firstName: esEmpresa ? null : firstName || null,
           lastName: esEmpresa ? null : resto.join(' ') || null,
-          email: plan.pedido.cliente?.email ?? plan.pedido.email ?? null,
+          // Sin correo en la ficha, Bsale no tiene a dónde mandar el
+          // comprobante aunque se le pida.
+          email: correoDelCliente(plan.pedido),
           address: plan.pedido.direccion.linea1,
           city: plan.pedido.direccion.ciudad,
           municipality: plan.pedido.direccion.provincia,

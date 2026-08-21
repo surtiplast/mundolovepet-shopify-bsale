@@ -68,6 +68,10 @@ function configuracion(env: Env): ConfigComprobante {
     // El stock ya se sincroniza desde Bsale hacia Shopify. Si además el
     // comprobante descontara stock, la misma venta se restaría dos veces.
     descontarStock: false,
+    // Bsale envía el comprobante al cliente. Se puede apagar con
+    // `BSALE_ENVIAR_CORREO=0` si algún día su cuenta empieza a mandarlo por su
+    // cuenta y los clientes lo recibieran dos veces.
+    enviarCorreo: env.BSALE_ENVIAR_CORREO,
   };
 }
 

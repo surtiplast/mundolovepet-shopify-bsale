@@ -11,6 +11,7 @@ import {
   emitirComprobante,
   claveIdempotencia,
   fechaEmision,
+  correoDelCliente,
   type ConfigComprobante,
 } from '../src/services/invoice.service.js';
 import type { PedidoShopify } from '../src/integrations/shopify/client.js';
@@ -25,6 +26,7 @@ const CONFIG: ConfigComprobante = {
   taxIdIgv: 1,
   tasaIgv: 0.18,
   descontarStock: false,
+  enviarCorreo: true,
 };
 
 /** Un pedido de S/ 118,00: S/ 100 netos + 18 % de IGV. */
@@ -325,5 +327,62 @@ describe('emitirComprobante', () => {
 
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/no habilitado/);
+  });
+});
+
+/**
+ * El comprobante lo manda Bsale, no esta app: su API acepta `sendEmail` y usa
+ * su plantilla y su remitente. Montar un envío propio exigiría contratar un
+ * servicio de correo y competiría con el suyo.
+ */
+describe('el correo al cliente', () => {
+  it('se pide a Bsale que lo envíe', () => {
+    const plan = planificarComprobante(pedido(), CONFIG);
+    expect(plan.documento?.sendEmail).toBe(1);
+  });
+
+  it('no se pide si está desactivado', () => {
+    const plan = planificarComprobante(pedido(), { ...CONFIG, enviarCorreo: false });
+    expect(plan.documento?.sendEmail).toBeUndefined();
+  });
+
+  /**
+   * Pedir el envío sin destinatario no manda nada, pero deja en Bsale un rastro
+   * de correos que nunca salieron. Mejor no pedirlo.
+   */
+  it('no se pide si el pedido no tiene correo', () => {
+    const plan = planificarComprobante(
+      pedido({ email: null, cliente: { id: 'c', nombre: 'Ana', email: null } }),
+      CONFIG,
+    );
+    expect(plan.documento?.sendEmail).toBeUndefined();
+  });
+
+  describe('de dónde sale el correo', () => {
+    it('prefiere el de la ficha del cliente', () => {
+      const p = pedido({
+        email: 'del-pedido@ejemplo.pe',
+        cliente: { id: 'c', nombre: 'Ana', email: 'de-la-ficha@ejemplo.pe' },
+      });
+      expect(correoDelCliente(p)).toBe('de-la-ficha@ejemplo.pe');
+    });
+
+    it('si la ficha no tiene, usa el del pedido', () => {
+      const p = pedido({
+        email: 'del-pedido@ejemplo.pe',
+        cliente: { id: 'c', nombre: 'Ana', email: null },
+      });
+      expect(correoDelCliente(p)).toBe('del-pedido@ejemplo.pe');
+    });
+
+    it('un pedido sin ningún correo devuelve null', () => {
+      const p = pedido({ email: null, cliente: null });
+      expect(correoDelCliente(p)).toBeNull();
+    });
+
+    it('algo que no parece un correo se descarta', () => {
+      const p = pedido({ email: 'esto-no-es-un-correo', cliente: null });
+      expect(correoDelCliente(p)).toBeNull();
+    });
   });
 });

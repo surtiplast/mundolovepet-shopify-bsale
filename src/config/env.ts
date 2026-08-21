@@ -59,6 +59,18 @@ const schema = z.object({
   BSALE_TAX_ID_IGV: z.coerce.number().int().positive().optional(),
   BSALE_WEBHOOK_PATH_SECRET: z.string().optional(),
 
+  /**
+   * Si Bsale manda el comprobante por correo al cliente. Activo por defecto.
+   *
+   * Se puede apagar con `0` si la cuenta de Bsale empezara a enviarlo por su
+   * cuenta: recibir la misma boleta dos veces molesta al cliente y hace dudar
+   * de si se le ha cobrado dos veces.
+   */
+  BSALE_ENVIAR_CORREO: z
+    .string()
+    .optional()
+    .transform((v) => v !== '0' && v?.toLowerCase() !== 'false'),
+
   // ── Candado del panel ──
   //
   // Provisional, hasta que la app viva dentro del admin de Shopify y la
