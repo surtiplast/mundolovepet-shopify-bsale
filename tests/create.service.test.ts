@@ -17,6 +17,7 @@ function prod(over: Partial<ProductoGuardado> = {}): ProductoGuardado {
   return {
     sku: 'A-1',
     barcode: '8595602559152',
+    brand: 'BRIT CARE',
     bsaleVariantId: 1,
     bsaleProductId: 9,
     name: 'Producto de prueba',
@@ -118,6 +119,7 @@ describe('crearProductos', () => {
       titulo: 'Collar rojo',
       sku: 'A-9',
       barcode: '8595602559152',
+      marca: 'BRIT CARE',
       precio: 19.9,
       // `null` porque nadie ha llamado a `anadirCostos`: planificar no toca Bsale.
       costo: null,
@@ -294,5 +296,33 @@ describe('nunca crear algo cuyo código ya está en Shopify', () => {
   it('sin el conjunto se comporta como antes: no rompe nada', () => {
     const plan = planificarCreacion([prod({ sku: 'X' })], ['X']);
     expect(plan.candidatos).toHaveLength(1);
+  });
+});
+
+/**
+ * La marca de Bsale va al campo «Proveedor» de Shopify, que es como Shopify
+ * llama al fabricante. No hay un campo «marca» aparte.
+ */
+describe('la marca', () => {
+  it('viaja hasta Shopify', async () => {
+    const client = {
+      crearProductoBorrador: vi.fn(async () => ({ ok: true, productId: 'p', errores: [] })),
+    };
+    const plan = planificarCreacion([prod({ sku: 'X', brand: 'ROYAL CANIN' })], ['X']);
+
+    await crearProductos(client as never, plan, 'gid://loc/1');
+
+    const enviado = client.crearProductoBorrador.mock.calls[0]![0] as { marca: string | null };
+    expect(enviado.marca).toBe('ROYAL CANIN');
+  });
+
+  it('si Bsale no la tiene, el producto se crea sin proveedor', () => {
+    const plan = planificarCreacion([prod({ sku: 'X', brand: null })], ['X']);
+    expect(plan.candidatos[0]!.marca).toBeNull();
+  });
+
+  it('una marca en blanco cuenta como ausente', () => {
+    const plan = planificarCreacion([prod({ sku: 'X', brand: '   ' })], ['X']);
+    expect(plan.candidatos[0]!.marca).toBeNull();
   });
 });

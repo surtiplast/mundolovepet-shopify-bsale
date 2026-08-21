@@ -17,6 +17,8 @@ export interface ProductoGuardado {
   sku: string;
   /** Campo distinto del SKU. Ver el comentario en `ItemCatalogo`. */
   barcode: string | null;
+  /** La marca de Bsale. Va al campo «Proveedor» de Shopify. */
+  brand: string | null;
   bsaleVariantId: number | null;
   bsaleProductId: number | null;
   name: string | null;
@@ -52,6 +54,7 @@ export class InMemoryCatalogStore implements CatalogStore {
 interface ProductMapRow {
   sku: string;
   barcode: string | null;
+  brand: string | null;
   bsaleVariantId: number | null;
   bsaleProductId: number | null;
   name: string | null;
@@ -86,6 +89,7 @@ export class PrismaCatalogStore implements CatalogStore {
 
       const datos = {
         barcode: item.barcode,
+        brand: item.brand,
         bsaleVariantId: item.bsaleVariantId,
         bsaleProductId: item.bsaleProductId,
         name: item.name,
@@ -109,6 +113,7 @@ export class PrismaCatalogStore implements CatalogStore {
     return filas.map((f) => ({
       sku: f.sku,
       barcode: f.barcode,
+      brand: f.brand,
       bsaleVariantId: f.bsaleVariantId,
       bsaleProductId: f.bsaleProductId,
       name: f.name,

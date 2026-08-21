@@ -22,6 +22,8 @@ export interface CandidatoCreacion {
   sku: string;
   /** El EAN de Bsale. Campo distinto del SKU; `null` si la variante no tiene. */
   barcode: string | null;
+  /** La marca. Va al campo «Proveedor» de Shopify; `null` si Bsale no la tiene. */
+  marca: string | null;
   titulo: string;
   precio: number;
   stock: number | null;
@@ -120,6 +122,7 @@ export function planificarCreacion(
     candidatos.push({
       sku: p.sku,
       barcode: p.barcode?.trim() || null,
+      marca: p.brand?.trim() || null,
       titulo,
       precio: p.bsalePrice,
       bsaleVariantId: p.bsaleVariantId,
@@ -196,6 +199,7 @@ export async function crearProductos(
       titulo: c.titulo,
       sku: c.sku,
       barcode: c.barcode,
+      marca: c.marca,
       precio: c.precio,
       costo: c.costo,
       stock: c.stock,

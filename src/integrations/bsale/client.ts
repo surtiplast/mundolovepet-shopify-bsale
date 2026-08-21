@@ -106,7 +106,29 @@ export interface BsaleVariant {
    * en la variante. «EQUILIBRIO GRAIN FREE PUPPIES SMALL BREEDS 1.5» es el
    * nombre del producto; la variante puede no tener descripción ninguna.
    */
-  product?: { href?: string; id?: number; name?: string | null } | null;
+  product?: {
+    href?: string;
+    id?: number;
+    name?: string | null;
+    /**
+     * La marca. **No está documentada.**
+     *
+     * La interfaz de Bsale muestra una marca por producto, pero la referencia
+     * de `/v1/products.json` no la incluye entre sus campos. Se leen aquí las
+     * tres formas en que podría venir, por si la API devuelve más de lo que
+     * documenta —cosa habitual—:
+     *
+     *   · `brand` como texto suelto
+     *   · `brand.name` si viene expandida
+     *   · `brandName`, que es como la nombra la respuesta de crear packs
+     *
+     * Si no llega ninguna, el producto se crea sin marca y ya está. El panel
+     * enseña cuántas se han leído, así que con una lectura del catálogo se ve
+     * si esto sirve o si hay que buscar la marca por otro camino.
+     */
+    brand?: string | { name?: string | null } | null;
+    brandName?: string | null;
+  } | null;
 }
 
 /**

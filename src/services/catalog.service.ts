@@ -38,6 +38,8 @@ export interface ItemCatalogo {
    * real y rompía los lectores de tienda.
    */
   barcode: string | null;
+  /** La marca, si Bsale la manda. Va al campo «Proveedor» de Shopify. */
+  marca: string | null;
   nombre: string | null;
   /** Precio con impuestos incluidos. `null` si la variante no está en la lista. */
   precio: number | null;
@@ -55,6 +57,15 @@ export interface ResumenCatalogo {
   duplicados: Array<{ sku: string; variantes: number[] }>;
   sinPrecio: number;
   sinStock: number;
+  /**
+   * Cuántas variantes traen marca desde Bsale.
+   *
+   * Bsale no documenta este campo, así que este contador es la forma de saber
+   * con datos reales si llega. Si sale 0 en un catálogo que en la interfaz de
+   * Bsale sí tiene marcas, es que la API no las expone y hay que buscarlas por
+   * otro camino.
+   */
+  conMarca: number;
   leidoEn: string;
 }
 
@@ -137,6 +148,7 @@ export async function leerCatalogo(
       bsaleProductId: v.product?.id ?? null,
       sku: skuCrudo,
       barcode: v.barCode?.trim() || null,
+      marca: leerMarca(v.product),
       // El nombre de la VARIANTE suele venir vacío; el comercial está en el
       // producto. Se prefiere la variante cuando existe («Talla M») y se cae al
       // producto cuando no, que es el caso mayoritario.
@@ -160,10 +172,35 @@ export async function leerCatalogo(
     duplicados,
     sinPrecio: items.filter((i) => i.problemas.includes('SIN_PRECIO')).length,
     sinStock: items.filter((i) => i.problemas.includes('SIN_STOCK')).length,
+    conMarca: items.filter((i) => i.marca).length,
     leidoEn: now().toISOString(),
   };
 
   return { items, resumen };
+}
+
+/**
+ * Saca la marca del producto, venga como venga.
+ *
+ * Bsale no documenta este campo: su interfaz muestra una marca por producto,
+ * pero la referencia de `/v1/products.json` no la incluye. Se prueban las
+ * formas plausibles en vez de asumir una, y devolver `null` es una respuesta
+ * perfectamente válida.
+ */
+function leerMarca(producto: BsaleVariant['product']): string | null {
+  if (!producto) return null;
+
+  const bruto =
+    typeof producto.brand === 'string'
+      ? producto.brand
+      : (producto.brand?.name ?? producto.brandName ?? null);
+
+  const limpio = bruto?.trim();
+  // «Sin marca» es lo que Bsale enseña cuando no hay ninguna. Guardarlo tal
+  // cual llenaría Shopify de productos cuyo proveedor es, literalmente, «Sin
+  // marca», que es peor que dejarlo vacío.
+  if (!limpio || /^sin\s*marca$/i.test(limpio)) return null;
+  return limpio;
 }
 
 /**

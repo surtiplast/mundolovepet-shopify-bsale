@@ -661,6 +661,15 @@ export interface ProductoNuevo {
    * se omite en la mutación: mejor vacío que con un valor inventado.
    */
   barcode: string | null;
+  /**
+   * La marca de Bsale.
+   *
+   * En Shopify el campo que le corresponde se llama `vendor` —«Proveedor» en la
+   * interfaz en español—. No hay un campo «marca» aparte: Shopify usa ése tanto
+   * para el fabricante como para el proveedor, y es el que aparece en los
+   * filtros de la tienda.
+   */
+  marca: string | null;
   /** Precio con IGV. */
   precio: number;
   /**
@@ -1053,6 +1062,9 @@ export class ShopifyClient {
       input: {
         title: p.titulo,
         status: 'DRAFT',
+        // Se omite si no hay marca, en vez de mandar cadena vacía: un proveedor
+        // en blanco ensucia los filtros de la tienda igual que uno inventado.
+        ...(p.marca ? { vendor: p.marca } : {}),
         // Un producto sin variantes explícitas necesita igualmente una opción.
         // «Title / Default Title» es la convención de Shopify para eso.
         productOptions: [{ name: 'Title', position: 1, values: [{ name: 'Default Title' }] }],

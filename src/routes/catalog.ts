@@ -76,6 +76,7 @@ export function catalogRouter(
         items.map((i: ItemCatalogo) => ({
           sku: i.sku,
           barcode: i.barcode,
+          brand: i.marca,
           bsaleVariantId: i.bsaleVariantId,
           bsaleProductId: i.bsaleProductId,
           name: i.nombre,

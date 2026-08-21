@@ -549,6 +549,13 @@ function pintarResumen(r) {
   chips.push(problema(r.sinPrecio, 'Sin precio'));
   chips.push(problema(r.sinStock, 'Sin stock'));
 
+  /* Cuántas marcas ha traído Bsale. Su API no documenta ese campo, así que este
+     número es la única forma de saber con datos reales si llega. No es un
+     problema si sale bajo: muchos catálogos no tienen marca cargada. */
+  if (r.conMarca !== undefined) {
+    chips.push(`<span class="cat-chip">Con marca <b>${r.conMarca}</b></span>`);
+  }
+
   $('catResumen').innerHTML = chips.join('');
 }
 
