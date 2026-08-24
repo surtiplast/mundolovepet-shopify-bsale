@@ -52,7 +52,7 @@
   /* Antes 1080px centrados. Con 3.239 productos en una tabla, ese ancho
      obligaba a desplazarse en horizontal para leer precio y stock a la vez,
      que es justo la comparación para la que existe la tabla. */
-  .wrap{max-width:1720px;margin:0 auto;padding:24px 24px 64px}
+  .wrap{max-width:1720px;margin:0 auto;padding:12px 24px 40px}
 
   /* ── Dos columnas: acciones a un lado, datos al otro ──────────────────────
      Los botones ocupaban una franja horizontal encima de la tabla y empujaban
@@ -107,7 +107,7 @@
      Trece botones en una fila obligaban a leerlos todos para encontrar uno.
      Agrupados por tarea, cada pestaña enseña sólo lo suyo. */
   .tabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--line);
-        margin:0 0 18px}
+        margin:0 0 12px}
   .tab{appearance:none;border:0;background:none;color:var(--muted);cursor:pointer;
        font:inherit;font-size:14px;padding:10px 14px;border-radius:8px 8px 0 0;
        border-bottom:2px solid transparent;margin-bottom:-1px}
@@ -131,7 +131,7 @@
   button.primary{background:var(--brand);border-color:var(--brand);color:#fff}
   button.primary:hover:not(:disabled){background:var(--brand-2)}
 
-  .banner{margin-bottom:20px;padding:13px 16px;border-radius:11px;font-size:13px;
+  .banner{margin-bottom:12px;padding:11px 15px;border-radius:11px;font-size:13px;
           border:1px solid var(--line);background:var(--panel);display:flex;gap:11px;align-items:flex-start}
   .banner.ok{border-color:color-mix(in srgb,var(--ok) 45%,var(--line))}
   .banner.err{border-color:color-mix(in srgb,var(--err) 45%,var(--line))}
@@ -143,6 +143,17 @@
   .out.show{display:block}
 
   .note{margin-top:22px;font-size:12.5px;color:var(--muted);border-left:2px solid var(--line);padding-left:14px}
+
+  /* ── Explicaciones plegadas ───────────────────────────────────────────────
+     Los párrafos que explican una pantalla ocupaban cinco líneas encima de la
+     tabla, todos los días, aunque sólo hagan falta la primera vez. Plegados
+     ocupan una, y siguen ahí para quien los necesite. */
+  .ayuda{margin:0 0 10px;font-size:12.5px;color:var(--muted)}
+  .ayuda summary{cursor:pointer;color:var(--brand-2);width:fit-content;
+                 list-style-position:inside}
+  .ayuda summary:hover{text-decoration:underline}
+  .ayuda[open] summary{margin-bottom:7px}
+  .ayuda > *:not(summary){max-width:80ch}
   .note strong{color:var(--txt)}
   footer{margin-top:34px;padding-top:18px;border-top:1px solid var(--line);
          color:var(--muted);font-size:12px;display:flex;gap:14px;flex-wrap:wrap}
@@ -151,15 +162,17 @@
   button.peligro:hover{background:color-mix(in srgb,var(--err) 12%,transparent)}
 
   /* ── Catálogo (Fase 2) ── */
-  .cat-titulo{margin:26px 0 12px;font-size:15px;font-weight:600}
-  .cat-resumen{display:flex;gap:9px;flex-wrap:wrap;margin-bottom:14px}
+  .cat-titulo{margin:0 0 10px;font-size:15px;font-weight:600}
+  /* Salvo cuando hay dos secciones seguidas: ahí sí hace falta separarlas. */
+  section + section .cat-titulo{margin-top:22px}
+  .cat-resumen{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
   .cat-chip{border:1px solid var(--line);background:var(--panel);border-radius:999px;
             padding:5px 12px;font-size:12.5px;color:var(--muted)}
   .cat-chip b{color:var(--txt);font-weight:600}
   .cat-chip.alerta{border-color:color-mix(in srgb,var(--err) 45%,var(--line))}
   .cat-chip.alerta b{color:var(--err)}
 
-  .cat-filtros{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+  .cat-filtros{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
   .cat-filtros input[type=search]{flex:1;min-width:220px;background:var(--panel-2);color:var(--txt);
             border:1px solid var(--line);border-radius:9px;padding:9px 12px;font-size:13px}
   .cat-check{display:flex;gap:7px;align-items:center;font-size:12.5px;color:var(--muted);cursor:pointer}
@@ -168,7 +181,7 @@
   /* `70vh` en vez de 460px fijos: en un monitor grande se veían doce filas de
      tres mil y sobraba media pantalla en blanco debajo. */
   .cat-tabla-scroll{border:1px solid var(--line);border-radius:11px;overflow:auto;
-                    max-height:70vh}
+                    max-height:calc(100vh - 210px);min-height:220px}
   .cat-tabla{width:100%;border-collapse:collapse;font-size:13px}
   .cat-tabla th{position:sticky;top:0;background:var(--panel);text-align:left;font-weight:600;
             padding:10px 13px;border-bottom:1px solid var(--line);font-size:12.5px}
@@ -306,13 +319,22 @@
   <section id="duplicados" data-tabs="productos" hidden>
     <h2 class="cat-titulo">Códigos repetidos en Shopify</h2>
     <div id="dupResumen" class="cat-resumen"></div>
-    <p class="tab-nota">
-      Esta pantalla <strong>no borra nada</strong>. Dos variantes con el mismo
-      código pueden ser un duplicado que creó la app o dos productos que
-      registraste así a propósito, y desde aquí no hay forma de saberlo con
-      certeza. Lo marcado como <b>probable</b> es borrador y sin imagen: así es
-      como crea la app, y por eso conviene mirarlo primero.
-    </p>
+    <details class="ayuda">
+      <summary>Qué significa «probable» y qué se borra</summary>
+      <p style="margin:0 0 7px">
+        Este informe <strong>no borra nada</strong>. Dos variantes con el mismo
+        código pueden ser un duplicado que creó la app o dos productos que
+        registraste así a propósito, y desde aquí no hay forma de saberlo con
+        certeza. Lo marcado como <b>probable</b> es borrador y sin imagen: así es
+        como crea la app, y por eso conviene mirarlo primero.
+      </p>
+      <p style="margin:0">
+        <b>Eliminar duplicados seguros</b> sí borra, y sólo lo que cumple las
+        cuatro reglas: es borrador, no tiene imagen, su producto tiene una sola
+        variante, y siempre queda uno vivo por cada código. Lo demás se queda y
+        el informe dice por qué. Shopify no tiene papelera.
+      </p>
+    </details>
     <div class="cat-tabla-scroll">
       <table class="cat-tabla">
         <thead>
