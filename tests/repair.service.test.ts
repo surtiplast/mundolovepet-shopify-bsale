@@ -254,3 +254,96 @@ describe('aplicarReparacion', () => {
     expect(r.errores[0]!.mensaje).toContain('Rechazado');
   });
 });
+
+/**
+ * Reparar cada campo por su cuenta.
+ *
+ * Separarlos no es cosmética: pedir el costo obliga a una petición a Bsale por
+ * variante, y mezclarlo con el código de barras hacía que arreglar un código
+ * —que sale del catálogo ya guardado— costara casi un minuto de espera.
+ */
+describe('reparar sólo un campo', () => {
+  const soloBarcode = { barcode: true, costo: false };
+  const soloCosto = { barcode: false, costo: true };
+
+  it('con campos=barcode no marca ningún costo, ni siquiera el que falta', () => {
+    const plan = planificarReparacion(
+      [bsale()],
+      [shopify({ costo: null })],
+      undefined,
+      soloBarcode,
+    );
+
+    expect(plan.resumen.codigoDeBarras).toBe(1);
+    expect(plan.resumen.costo).toBe(0);
+    expect(plan.reparaciones[0]!.costo).toBeUndefined();
+  });
+
+  it('con campos=barcode no se le pregunta el costo a Bsale', async () => {
+    const plan = planificarReparacion(
+      [bsale()],
+      [shopify({ costo: null })],
+      undefined,
+      soloBarcode,
+    );
+    const obtenerCosto = vi.fn();
+
+    await anadirCostosReparacion(plan, obtenerCosto);
+
+    expect(obtenerCosto).not.toHaveBeenCalled();
+  });
+
+  it('con campos=costo no toca el código de barras aunque lleve la huella', () => {
+    const plan = planificarReparacion(
+      [bsale()],
+      [shopify({ costo: null })],
+      undefined,
+      soloCosto,
+    );
+
+    expect(plan.resumen.codigoDeBarras).toBe(0);
+    expect(plan.reparaciones[0]!.barcode).toBeUndefined();
+  });
+
+  it('con campos=costo, una variante que sólo tenía el código mal se queda fuera', () => {
+    const plan = planificarReparacion(
+      [bsale()],
+      [shopify({ costo: 25 })],
+      undefined,
+      soloCosto,
+    );
+
+    expect(plan.reparaciones).toHaveLength(0);
+  });
+
+  it('sin decir nada se reparan los dos, como antes', () => {
+    const plan = planificarReparacion([bsale()], [shopify({ costo: null })]);
+
+    expect(plan.resumen.codigoDeBarras).toBe(1);
+    expect(plan.resumen.costo).toBe(1);
+  });
+});
+
+describe('el contador de los que no se pueden arreglar', () => {
+  it('cuenta la variante que lleva la huella pero no tiene EAN en Bsale', () => {
+    const plan = planificarReparacion([bsale({ barcode: null })], [shopify()]);
+
+    expect(plan.resumen.sinCodigoEnBsale).toBe(1);
+    expect(plan.resumen.codigoDeBarras).toBe(0);
+  });
+
+  it('también cuando Bsale trae como código de barras el propio SKU', () => {
+    const plan = planificarReparacion(
+      [bsale({ barcode: '74352029961567' })],
+      [shopify()],
+    );
+
+    expect(plan.resumen.sinCodigoEnBsale).toBe(1);
+  });
+
+  it('no cuenta la variante cuyo código de barras ya es correcto', () => {
+    const plan = planificarReparacion([bsale()], [shopify({ barcode: '8595602559152' })]);
+
+    expect(plan.resumen.sinCodigoEnBsale).toBe(0);
+  });
+});

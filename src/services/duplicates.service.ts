@@ -38,6 +38,15 @@ export interface VarianteRepetida {
   /** `true` si no tiene ninguna imagen. Los que crea la app nunca la tienen. */
   sinImagen: boolean;
   /**
+   * Cuántas variantes tiene el producto al que pertenece.
+   *
+   * Importa para borrar: Shopify borra productos, no variantes sueltas. Si el
+   * producto tiene dos tallas y sólo una está repetida, borrarlo se llevaría la
+   * otra por delante. `null` cuando no se ha podido leer, y entonces tampoco se
+   * borra.
+   */
+  variantesDelProducto: number | null;
+  /**
    * Cuánto se parece a algo creado por la app, de 0 a 2.
    *
    * No es una certeza, es una ordenación: los de puntuación 2 —borrador y sin
@@ -82,6 +91,7 @@ function aVarianteRepetida(v: ShopifyVariant): VarianteRepetida {
     stock: v.inventoryQuantity,
     esBorrador,
     sinImagen,
+    variantesDelProducto: v.variantesDelProducto ?? null,
     sospecha: (esBorrador ? 1 : 0) + (sinImagen ? 1 : 0),
   };
 }
@@ -158,4 +168,172 @@ export function buscarDuplicados(variantes: ShopifyVariant[]): InformeDuplicados
       ),
     },
   };
+}
+
+// ── Borrado de duplicados ────────────────────────────────────────────────────
+
+export interface CandidatoBorrado {
+  productId: string;
+  variantId: string;
+  titulo: string | null;
+  sku: string | null;
+  barcode: string | null;
+  /** El código por el que choca con el que se queda. */
+  codigo: string;
+  /** El producto que sobrevive al grupo, para poder explicarlo en el informe. */
+  sobrevive: { productId: string | null; titulo: string | null };
+}
+
+export interface PlanBorrado {
+  candidatos: CandidatoBorrado[];
+  /** Grupos que se dejan intactos, con el motivo. Es la parte importante. */
+  intocables: Array<{ codigo: string; motivo: string; variantes: number }>;
+  resumen: {
+    gruposRevisados: number;
+    aBorrar: number;
+    gruposIntocables: number;
+  };
+}
+
+export interface ResultadoBorrado {
+  borrados: number;
+  fallidos: number;
+  errores: Array<{ productId: string; mensaje: string }>;
+}
+
+/**
+ * Decide qué duplicados se pueden borrar sin arriesgar nada. **No escribe.**
+ *
+ * ── Las cuatro reglas, y por qué son tan estrechas ───────────────────────────
+ *
+ * Borrar un producto de una tienda no se deshace. No hay papelera, no hay
+ * «ctrl+z», y si el borrado se equivoca la única salida es volver a crearlo a
+ * mano con sus fotos, su descripción y su historial de ventas perdido. Por eso
+ * aquí la pregunta no es «¿cuántos puedo borrar?» sino «¿de cuáles estoy
+ * completamente seguro?».
+ *
+ * 1. **Sólo borrador.** Un producto publicado puede estar vendiéndose ahora
+ *    mismo, tener enlaces desde fuera o estar en una colección. La app nunca
+ *    publica nada, así que un duplicado suyo sigue en borrador.
+ * 2. **Sólo sin imagen.** La app tampoco pone fotos. Una imagen significa que
+ *    una persona pasó por ahí, y lo que tocó una persona no lo borra un botón.
+ * 3. **Sólo productos de una única variante.** Shopify borra el producto
+ *    entero. Si tiene dos tallas y sólo una está repetida, borrarlo se llevaría
+ *    la buena.
+ * 4. **Siempre sobrevive uno.** Si en un grupo todas las variantes cumplen lo
+ *    anterior, se conserva la primera de todos modos. Un código repetido es un
+ *    problema; un código que desaparece del catálogo es otro peor.
+ *
+ * Lo que no cumpla las cuatro se queda, y el informe dice por qué. Un duplicado
+ * que sobrevive se puede borrar a mano en un minuto; uno borrado por error
+ * cuesta una tarde.
+ */
+export function planificarBorradoDuplicados(
+  informe: InformeDuplicados,
+  limite?: number,
+): PlanBorrado {
+  const candidatos: CandidatoBorrado[] = [];
+  const intocables: Array<{ codigo: string; motivo: string; variantes: number }> = [];
+
+  for (const grupo of informe.grupos) {
+    if (limite !== undefined && candidatos.length >= limite) break;
+
+    const borrables = grupo.variantes.filter(
+      (v) =>
+        v.esBorrador &&
+        v.sinImagen &&
+        v.productId !== null &&
+        v.variantesDelProducto === 1,
+    );
+
+    if (borrables.length === 0) {
+      intocables.push({
+        codigo: grupo.codigo,
+        motivo:
+          'Ninguna de las variantes es un borrador sin imagen con un solo producto. Revísalo a mano.',
+        variantes: grupo.variantes.length,
+      });
+      continue;
+    }
+
+    // Regla 4. Si todas son borrables, la primera se queda igual.
+    const sobrantes =
+      borrables.length === grupo.variantes.length ? borrables.slice(1) : borrables;
+
+    if (sobrantes.length === 0) {
+      intocables.push({
+        codigo: grupo.codigo,
+        motivo: 'Sólo queda una variante con ese código. No sobra nada.',
+        variantes: grupo.variantes.length,
+      });
+      continue;
+    }
+
+    // El que se queda: el primero que NO está en la lista de sobrantes.
+    const aBorrar = new Set(sobrantes.map((v) => v.variantId));
+    const superviviente = grupo.variantes.find((v) => !aBorrar.has(v.variantId)) ?? null;
+
+    for (const v of sobrantes) {
+      if (limite !== undefined && candidatos.length >= limite) break;
+      candidatos.push({
+        productId: v.productId as string,
+        variantId: v.variantId,
+        titulo: v.titulo,
+        sku: v.sku,
+        barcode: v.barcode,
+        codigo: grupo.codigo,
+        sobrevive: {
+          productId: superviviente?.productId ?? null,
+          titulo: superviviente?.titulo ?? null,
+        },
+      });
+    }
+  }
+
+  return {
+    candidatos,
+    intocables,
+    resumen: {
+      gruposRevisados: informe.grupos.length,
+      aBorrar: candidatos.length,
+      gruposIntocables: intocables.length,
+    },
+  };
+}
+
+/**
+ * Borra de verdad. **Esto sí escribe en la tienda, y no se deshace.**
+ *
+ * Uno a uno y en serie, igual que el alta: un fallo suelto no debe arrastrar al
+ * resto, y en paralelo se dispararía el control de caudal de Shopify.
+ */
+export async function borrarDuplicados(
+  eliminarProducto: (productId: string) => Promise<{ ok: boolean; errores: string[] }>,
+  plan: PlanBorrado,
+): Promise<ResultadoBorrado> {
+  const resultado: ResultadoBorrado = { borrados: 0, fallidos: 0, errores: [] };
+
+  // Un mismo producto podría aparecer en dos grupos —choca por SKU y por código
+  // de barras con productos distintos—. Borrarlo dos veces daría un error
+  // gratuito en el informe.
+  const yaBorrados = new Set<string>();
+
+  for (const c of plan.candidatos) {
+    if (yaBorrados.has(c.productId)) continue;
+    yaBorrados.add(c.productId);
+
+    try {
+      const r = await eliminarProducto(c.productId);
+      if (r.ok) resultado.borrados++;
+      else {
+        resultado.fallidos++;
+        resultado.errores.push({ productId: c.productId, mensaje: r.errores.join(' | ') });
+      }
+    } catch (error) {
+      resultado.fallidos++;
+      resultado.errores.push({ productId: c.productId, mensaje: (error as Error).message });
+    }
+  }
+
+  return resultado;
 }

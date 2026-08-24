@@ -101,6 +101,13 @@ export interface ShopifyVariant {
    * hay de dónde sacarla en Bsale—, y eso ayuda a reconocer un duplicado.
    */
   tieneImagen: boolean;
+  /**
+   * Cuántas variantes tiene el producto entero.
+   *
+   * `null` si Shopify no lo devolvió. Quien decida borrar debe tratar ese
+   * `null` como «no lo sé» y abstenerse, nunca como «sólo una».
+   */
+  variantesDelProducto: number | null;
 }
 
 export const DEFAULT_API_VERSION = '2026-07';
@@ -161,6 +168,12 @@ const VARIANTS_QUERY = /* GraphQL */ `
           id
           title
           status
+          # Cuántas variantes tiene. Shopify borra productos enteros, nunca
+          # variantes sueltas, así que sin esto no se puede saber si borrar un
+          # duplicado se llevaría por delante una talla buena.
+          variantsCount {
+            count
+          }
           # Basta con saber si hay al menos una. Pedir todas las imágenes de
           # miles de productos multiplicaría el coste de la consulta para nada.
           media(first: 1) {
@@ -210,6 +223,25 @@ const REPARAR_MUTATION = /* GraphQL */ `
         id
         barcode
       }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+/**
+ * Borrado de un producto.
+ *
+ * Es la única operación de esta app que destruye algo sin vuelta atrás: Shopify
+ * no tiene papelera para productos. Vive aquí abajo, sola y con nombre largo,
+ * para que nadie la use por error creyendo que archiva.
+ */
+const BORRAR_PRODUCTO_MUTATION = /* GraphQL */ `
+  mutation BorrarProducto($id: ID!) {
+    productDelete(input: { id: $id }) {
+      deletedProductId
       userErrors {
         field
         message
@@ -812,6 +844,7 @@ export class ShopifyClient {
               id: string;
               title: string;
               status: string | null;
+              variantsCount: { count: number } | null;
               media: { nodes: Array<{ id: string }> } | null;
             } | null;
           }>;
@@ -834,6 +867,7 @@ export class ShopifyClient {
           title: n.title,
           estado: n.product?.status ?? null,
           tieneImagen: (n.product?.media?.nodes?.length ?? 0) > 0,
+          variantesDelProducto: n.product?.variantsCount?.count ?? null,
         };
         vistos++;
         if (vistos >= maxItems) return;
@@ -942,6 +976,36 @@ export class ShopifyClient {
     const errores = (data.productVariantsBulkUpdate?.userErrors ?? []).map(
       (e) => `${(e.field ?? []).join('.')}: ${e.message}`,
     );
+    return { ok: errores.length === 0, errores };
+  }
+
+  /**
+   * Borra un producto de la tienda. **Irreversible.**
+   *
+   * Shopify no archiva ni manda a una papelera: el producto, sus variantes, sus
+   * imágenes y su historial desaparecen. Quien llame a esto debe haber decidido
+   * ya, con reglas explícitas, que ese producto sobra —ver
+   * `planificarBorradoDuplicados`—.
+   *
+   * Un `deletedProductId` vacío sin `userErrors` se trata como fallo: significa
+   * que Shopify no borró nada y darlo por bueno dejaría el informe mintiendo.
+   */
+  async eliminarProducto(productId: string): Promise<ResultadoEscritura> {
+    const data = await this.query<{
+      productDelete: {
+        deletedProductId: string | null;
+        userErrors: Array<{ field: string[] | null; message: string }>;
+      } | null;
+    }>(BORRAR_PRODUCTO_MUTATION, { id: productId });
+
+    const errores = (data.productDelete?.userErrors ?? []).map(
+      (e) => `${(e.field ?? []).join('.')}: ${e.message}`,
+    );
+
+    if (errores.length === 0 && !data.productDelete?.deletedProductId) {
+      errores.push('Shopify no devolvió ningún producto borrado.');
+    }
+
     return { ok: errores.length === 0, errores };
   }
 

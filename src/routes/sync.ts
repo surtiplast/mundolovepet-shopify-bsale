@@ -35,9 +35,16 @@ import {
   planificarReparacion,
   anadirCostosReparacion,
   aplicarReparacion,
+  TODOS_LOS_CAMPOS,
+  type CamposReparacion,
   type ResultadoReparacion,
 } from '../services/repair.service.js';
-import { buscarDuplicados } from '../services/duplicates.service.js';
+import {
+  buscarDuplicados,
+  planificarBorradoDuplicados,
+  borrarDuplicados,
+  type ResultadoBorrado,
+} from '../services/duplicates.service.js';
 import type { ShopifyVariant } from '../integrations/shopify/client.js';
 import { IntegrationError } from '../lib/errors.js';
 import { logger } from '../lib/logger.js';
@@ -53,6 +60,20 @@ const syncLimiter = rateLimit({
 function tipoDe(req: Request): TipoSync | null {
   const t = String(req.query.tipo ?? '').toUpperCase();
   return t === 'STOCK' || t === 'PRECIO' ? t : null;
+}
+
+/**
+ * Qué campos repara esta llamada: `?campos=barcode`, `?campos=costo`, o los dos
+ * si no se dice nada.
+ *
+ * El valor por defecto mantiene el comportamiento anterior, para que un enlace
+ * guardado o el cron sigan haciendo lo mismo que hacían.
+ */
+function camposDe(req: Request): CamposReparacion {
+  const c = String(req.query.campos ?? '').toLowerCase();
+  if (c === 'barcode' || c === 'codigo') return { barcode: true, costo: false };
+  if (c === 'costo' || c === 'coste') return { barcode: false, costo: true };
+  return TODOS_LOS_CAMPOS;
 }
 
 export function syncRouter(service: ConnectionService, store: CatalogStore, env: Env): Router {
@@ -305,6 +326,7 @@ export function syncRouter(service: ConnectionService, store: CatalogStore, env:
   router.post('/sync/reparar', syncLimiter, async (req: Request, res: Response) => {
     const aplicar = String(req.query.confirmar) === 'si';
     const limite = Number(req.query.limite) > 0 ? Number(req.query.limite) : undefined;
+    const campos = camposDe(req);
 
     try {
       const guardados = await store.listar();
@@ -325,18 +347,26 @@ export function syncRouter(service: ConnectionService, store: CatalogStore, env:
         },
       );
 
-      const plan = planificarReparacion(guardados, variantes, limite);
+      const plan = planificarReparacion(guardados, variantes, limite, campos);
 
-      // El costo se consulta siempre —también al simular—, porque si no el
-      // informe diría «voy a poner el costo» sin saber si Bsale tiene alguno.
-      const costos = await service.usarBsale(env.BSALE_API_BASE_URL, (bsale) =>
-        anadirCostosReparacion(plan, (variantId) => bsale.obtenerCosto(variantId)),
-      );
+      // El costo se consulta siempre que se vaya a reparar —también al simular—,
+      // porque si no el informe diría «voy a poner el costo» sin saber si Bsale
+      // tiene alguno.
+      //
+      // Y NO se consulta cuando sólo se pide el código de barras: es una
+      // petición a Bsale por variante, y era lo que hacía que reparar sólo el
+      // código de barras tardase casi un minuto para nada.
+      const costos = campos.costo
+        ? await service.usarBsale(env.BSALE_API_BASE_URL, (bsale) =>
+            anadirCostosReparacion(plan, (variantId) => bsale.obtenerCosto(variantId)),
+          )
+        : { conCosto: 0, sinCosto: 0 };
 
       if (!aplicar) {
         return res.json({
           ok: true,
           simulacion: true,
+          campos,
           resumen: plan.resumen,
           costos,
           reparaciones: plan.reparaciones.slice(0, 200),
@@ -353,9 +383,9 @@ export function syncRouter(service: ConnectionService, store: CatalogStore, env:
         },
       );
 
-      logger.info({ ...resultado, ...plan.resumen }, 'Productos reparados');
+      logger.info({ campos, ...resultado, ...plan.resumen }, 'Productos reparados');
 
-      res.json({ ok: true, simulacion: false, resumen: plan.resumen, costos, resultado });
+      res.json({ ok: true, simulacion: false, campos, resumen: plan.resumen, costos, resultado });
     } catch (error) {
       responderError(res, error, 'No se pudieron reparar los productos.');
     }
@@ -395,6 +425,75 @@ export function syncRouter(service: ConnectionService, store: CatalogStore, env:
       responderError(res, error, 'No se pudo buscar duplicados.');
     }
   });
+
+  /**
+   * Borra los duplicados que cumplen las cuatro reglas de
+   * `planificarBorradoDuplicados`. Sin `confirmar=si`, simula.
+   *
+   * Es la operación más destructiva de la app —Shopify no tiene papelera para
+   * productos—, así que además de la confirmación en la URL lleva su propio
+   * limitador, más estrecho que el del resto: un borrado repetido por un
+   * reintento del navegador no debe poder vaciar media tienda.
+   */
+  router.post(
+    '/duplicados/eliminar',
+    rateLimit({
+      windowMs: 5 * 60_000,
+      limit: 4,
+      standardHeaders: 'draft-7',
+      legacyHeaders: false,
+      message: { error: 'Demasiados borrados seguidos. Espera unos minutos.' },
+    }),
+    async (req: Request, res: Response) => {
+      const aplicar = String(req.query.confirmar) === 'si';
+      const limite = Number(req.query.limite) > 0 ? Number(req.query.limite) : undefined;
+
+      try {
+        const variantes: ShopifyVariant[] = [];
+        await service.usarShopify(
+          env.SHOPIFY_SHOP_DOMAIN,
+          env.SHOPIFY_API_VERSION,
+          env.SHOPIFY_CLIENT_ID,
+          async (client) => {
+            for await (const v of client.listarVariantes()) variantes.push(v);
+          },
+        );
+
+        // Se relee la tienda en vez de fiarse del informe anterior: entre
+        // mirarlo y pulsar el botón alguien pudo publicar uno de esos
+        // borradores o ponerle una foto, y entonces ya no se debe borrar.
+        const informe = buscarDuplicados(variantes);
+        const plan = planificarBorradoDuplicados(informe, limite);
+
+        if (!aplicar) {
+          return res.json({
+            ok: true,
+            simulacion: true,
+            resumen: plan.resumen,
+            candidatos: plan.candidatos.slice(0, 200),
+            intocables: plan.intocables.slice(0, 50),
+            totalIntocables: plan.intocables.length,
+          });
+        }
+
+        let resultado: ResultadoBorrado = { borrados: 0, fallidos: 0, errores: [] };
+        await service.usarShopify(
+          env.SHOPIFY_SHOP_DOMAIN,
+          env.SHOPIFY_API_VERSION,
+          env.SHOPIFY_CLIENT_ID,
+          async (client) => {
+            resultado = await borrarDuplicados((id) => client.eliminarProducto(id), plan);
+          },
+        );
+
+        logger.warn({ ...resultado, ...plan.resumen }, 'Duplicados borrados');
+
+        res.json({ ok: true, simulacion: false, resumen: plan.resumen, resultado });
+      } catch (error) {
+        responderError(res, error, 'No se pudieron borrar los duplicados.');
+      }
+    },
+  );
 
   return router;
 }

@@ -44,13 +44,43 @@ export interface Reparacion {
   costo?: number;
 }
 
+/**
+ * Qué campos se van a reparar en esta pasada.
+ *
+ * Existen por separado porque cuestan cosas muy distintas. El código de barras
+ * sale del catálogo que ya está en la base de datos: planificarlo es
+ * instantáneo. El costo hay que pedírselo a Bsale variante por variante, y eso
+ * son decenas de segundos aunque al final no haya nada que cambiar.
+ *
+ * Juntarlos en un solo botón obligaba a pagar siempre el precio del costo,
+ * incluso cuando lo único que se quería arreglar era el código de barras.
+ */
+export interface CamposReparacion {
+  barcode: boolean;
+  costo: boolean;
+}
+
+export const TODOS_LOS_CAMPOS: CamposReparacion = { barcode: true, costo: true };
+
 export interface PlanReparacion {
+  campos: CamposReparacion;
   reparaciones: Reparacion[];
   resumen: {
     total: number;
     codigoDeBarras: number;
     costo: number;
     revisados: number;
+    /**
+     * Variantes con la huella del fallo —código de barras igual al SKU— que aun
+     * así no se pueden arreglar, porque en el catálogo leído de Bsale esa
+     * variante no tiene `barCode`.
+     *
+     * Este contador existe porque su ausencia costaba confianza: el panel decía
+     * «reparados 218» sobre 3.282 revisados y no explicaba los otros 3.000. No
+     * estaban fallando; es que Bsale no tiene el dato. Verlo escrito evita
+     * pulsar el botón una y otra vez esperando un número distinto.
+     */
+    sinCodigoEnBsale: number;
   };
 }
 
@@ -70,6 +100,7 @@ export function planificarReparacion(
   catalogo: ProductoGuardado[],
   variantes: ShopifyVariant[],
   limite?: number,
+  campos: CamposReparacion = TODOS_LOS_CAMPOS,
 ): PlanReparacion {
   const porSku = new Map<string, ProductoGuardado>();
   for (const p of catalogo) {
@@ -79,6 +110,7 @@ export function planificarReparacion(
 
   const reparaciones: Reparacion[] = [];
   let revisados = 0;
+  let sinCodigoEnBsale = 0;
 
   for (const v of variantes) {
     if (limite !== undefined && reparaciones.length >= limite) break;
@@ -103,15 +135,24 @@ export function planificarReparacion(
     const esLaHuellaDelFallo =
       barcodeShopify !== null && normalizarSku(barcodeShopify) === clave;
 
-    if (esLaHuellaDelFallo && barcodeBsale && normalizarSku(barcodeBsale) !== clave) {
-      reparacion.barcode = barcodeBsale;
-      reparacion.barcodeAnterior = barcodeShopify;
+    if (esLaHuellaDelFallo) {
+      if (barcodeBsale && normalizarSku(barcodeBsale) !== clave) {
+        if (campos.barcode) {
+          reparacion.barcode = barcodeBsale;
+          reparacion.barcodeAnterior = barcodeShopify;
+        }
+      } else {
+        // Lleva la huella del fallo pero Bsale no tiene un EAN distinto que
+        // poner. No se toca: se deja el SKU antes que dejar el campo vacío o
+        // inventar un código, que un lector daría por bueno.
+        sinCodigoEnBsale++;
+      }
     }
 
     // ── Costo ───────────────────────────────────────────────────────────────
     // Se marca el hueco; el valor lo pone `anadirCostosReparacion`. Marcarlo
     // aquí evita preguntar a Bsale por los que ya tienen costo.
-    const faltaElCosto = v.costo === null || v.costo === 0;
+    const faltaElCosto = campos.costo && (v.costo === null || v.costo === 0);
 
     // Sin producto no se puede llamar a la mutación: exige el id del producto.
     if (!reparacion.productId) continue;
@@ -125,12 +166,14 @@ export function planificarReparacion(
   }
 
   return {
+    campos,
     reparaciones,
     resumen: {
       total: reparaciones.length,
       codigoDeBarras: reparaciones.filter((r) => r.barcode !== undefined).length,
       costo: reparaciones.filter((r) => r.costo !== undefined).length,
       revisados,
+      sinCodigoEnBsale,
     },
   };
 }

@@ -233,13 +233,19 @@
   <div class="panel-tab" data-panel="productos" hidden>
     <p class="tab-nota">Crea en Shopify los productos que sólo existen en Bsale
       —siempre como borrador— y corrige el código de barras y el costo de los
-      que se crearon mal.</p>
+      que se crearon mal. <strong>El código de barras y el costo van por
+      separado:</strong> el costo hay que pedírselo a Bsale variante por
+      variante y tarda bastante más, así que no conviene esperarlo cuando lo
+      único que quieres arreglar es el código.</p>
     <div class="actions" style="margin:0 0 20px">
       <button class="primary" id="btnSimCrear">Simular alta de productos</button>
       <button id="btnCrear" class="peligro">Crear productos en Shopify (borrador)</button>
-      <button id="btnSimReparar">Simular reparación</button>
-      <button id="btnReparar" class="peligro">Reparar código de barras y costo</button>
+      <button id="btnSimBarcode">Simular código de barras</button>
+      <button id="btnRepararBarcode" class="peligro">Reparar código de barras</button>
+      <button id="btnSimCosto">Simular costo</button>
+      <button id="btnRepararCosto" class="peligro">Reparar costo</button>
       <button id="btnDuplicados">Buscar SKU duplicados</button>
+      <button id="btnBorrarDuplicados" class="peligro">Eliminar duplicados seguros</button>
     </div>
   </div>
 
@@ -985,14 +991,35 @@ $('btnCrear').onclick = async (e) => {
    Arregla dos cosas de los productos que la app creó antes: el código de barras
    (al que se copiaba el SKU por error) y el costo (que nunca se enviaba).
 
-   Sólo toca lo que lleva la huella del fallo. Un código de barras distinto del
-   SKU se respeta siempre, porque lo habrá puesto alguien a mano. */
-async function repararProductos(aplicar, boton) {
+   Van en botones separados a propósito. No es una preferencia estética: el
+   código de barras sale del catálogo que ya está guardado y se calcula al
+   instante, mientras que el costo obliga a preguntarle a Bsale variante por
+   variante y tarda casi un minuto. Con un solo botón se pagaba siempre esa
+   espera, incluso para no cambiar ningún costo.
+
+   Sólo se toca lo que lleva la huella del fallo. Un código de barras distinto
+   del SKU se respeta siempre, porque lo habrá puesto alguien a mano. */
+
+const REPARACION = {
+  barcode: {
+    campos: 'barcode',
+    nombre: 'código de barras',
+    contador: (r) => r.codigoDeBarras,
+  },
+  costo: {
+    campos: 'costo',
+    nombre: 'costo',
+    contador: (r) => r.costo,
+  },
+};
+
+async function repararProductos(cual, aplicar, boton) {
+  const modo = REPARACION[cual];
   boton.disabled = true;
   const original = boton.textContent;
   boton.textContent = aplicar ? 'Reparando…' : 'Revisando…';
   try {
-    const url = aplicar ? '/api/sync/reparar?confirmar=si' : '/api/sync/reparar';
+    const url = `/api/sync/reparar?campos=${modo.campos}${aplicar ? '&confirmar=si' : ''}`;
     const res = await pedir(url, { method: 'POST' });
     const data = await res.json();
 
@@ -1002,13 +1029,22 @@ async function repararProductos(aplicar, boton) {
     } else if (data.simulacion) {
       const r = data.resumen;
       $('sync').hidden = false;
-      $('syncResumen').innerHTML = [
-        '<span class="cat-chip">Simulación · reparación</span>',
+      const chips = [
+        `<span class="cat-chip">Simulación · ${modo.nombre}</span>`,
         `<span class="cat-chip">Revisados <b>${r.revisados}</b></span>`,
         `<span class="cat-chip${r.total > 0 ? ' alerta' : ''}">Se corregirían <b>${r.total}</b></span>`,
-        `<span class="cat-chip">Código de barras <b>${r.codigoDeBarras}</b></span>`,
-        `<span class="cat-chip">Costo <b>${r.costo}</b></span>`,
-      ].join('');
+      ];
+      /* Los dos contadores de abajo son la respuesta a «pulso el botón y no
+         corrige nada». No es que falle: es que Bsale no tiene el dato para
+         esos productos, y sin verlo escrito uno vuelve a pulsar esperando otro
+         número. */
+      if (cual === 'barcode') {
+        chips.push(`<span class="cat-chip">Sin código en Bsale <b>${r.sinCodigoEnBsale}</b></span>`);
+      } else {
+        chips.push(`<span class="cat-chip">Sin costo en Bsale <b>${data.costos?.sinCosto ?? 0}</b></span>`);
+      }
+      $('syncResumen').innerHTML = chips.join('');
+
       const filas = data.reparaciones || [];
       $('syncTablaCaja').hidden = filas.length === 0;
       $('syncCuerpo').innerHTML = filas.map((f) => `<tr>
@@ -1022,7 +1058,7 @@ async function repararProductos(aplicar, boton) {
       const r = data.resultado;
       banner(
         r.fallidos > 0 ? 'err' : 'ok',
-        `Reparados ${r.reparados} productos.` +
+        `Reparados ${r.reparados} productos (${modo.nombre}).` +
           (r.fallidos > 0 ? ` ${r.fallidos} fallaron. Motivo: ${r.errores[0]?.mensaje ?? ''}` : ''),
       );
       if (r.errores?.length) show(r.errores);
@@ -1034,30 +1070,35 @@ async function repararProductos(aplicar, boton) {
   boton.textContent = original;
 }
 
-$('btnSimReparar').onclick = (e) => repararProductos(false, e.target);
-
-$('btnReparar').onclick = async (e) => {
-  /* Se simula primero y se pregunta con el número delante, igual que el resto
-     de acciones que escriben en la tienda. */
+/* Simula primero y pregunta con el número delante, igual que el resto de
+   acciones que escriben en la tienda. */
+async function confirmarYReparar(cual, e) {
+  const modo = REPARACION[cual];
   e.target.disabled = true;
   const original = e.target.textContent;
   e.target.textContent = 'Revisando…';
   try {
-    const res = await pedir('/api/sync/reparar', { method: 'POST' });
+    const res = await pedir(`/api/sync/reparar?campos=${modo.campos}`, { method: 'POST' });
     const data = await res.json();
     e.target.disabled = false;
     e.target.textContent = original;
 
     if (!res.ok) { banner('err', data.error?.message || 'No se pudo revisar.'); return; }
-    if (data.resumen.total === 0) {
-      banner('ok', 'No hay nada que reparar.');
+
+    const cuantos = modo.contador(data.resumen);
+    if (cuantos === 0) {
+      const porque = cual === 'barcode'
+        ? ` De los ${data.resumen.revisados} revisados, ${data.resumen.sinCodigoEnBsale} llevan el SKU como código de barras pero Bsale no tiene un EAN distinto que poner.`
+        : ` De los ${data.resumen.revisados} revisados, ${data.costos?.sinCosto ?? 0} no tienen costo registrado en Bsale.`;
+      banner('ok', `No hay nada que reparar en el ${modo.nombre}.${porque}`);
       return;
     }
     if (!confirm(
-      `Se corregirán ${data.resumen.total} productos en tu tienda:\n\n` +
-      `· Código de barras: ${data.resumen.codigoDeBarras}\n` +
-      `· Costo por artículo: ${data.resumen.costo}\n\n` +
-      `Sólo se toca el código de barras cuando ahora mismo es idéntico al SKU, y el costo cuando está vacío.\n\n¿Continuar?`
+      `Se corregirá el ${modo.nombre} de ${cuantos} productos en tu tienda.\n\n` +
+      (cual === 'barcode'
+        ? 'Sólo se toca el código de barras cuando ahora mismo es idéntico al SKU y Bsale tiene un EAN distinto.'
+        : 'Sólo se rellena el costo cuando en Shopify está vacío o en cero y Bsale sí lo tiene.') +
+      '\n\n¿Continuar?'
     )) {
       banner('ok', 'Cancelado. No se ha cambiado nada.');
       return;
@@ -1068,7 +1109,71 @@ $('btnReparar').onclick = async (e) => {
     e.target.textContent = original;
     return;
   }
-  await repararProductos(true, e.target);
+  await repararProductos(cual, true, e.target);
+}
+
+$('btnSimBarcode').onclick = (e) => repararProductos('barcode', false, e.target);
+$('btnSimCosto').onclick = (e) => repararProductos('costo', false, e.target);
+$('btnRepararBarcode').onclick = (e) => confirmarYReparar('barcode', e);
+$('btnRepararCosto').onclick = (e) => confirmarYReparar('costo', e);
+
+/* ── Borrado de duplicados ───────────────────────────────────────────────────
+   Lo único de esta app que destruye algo sin vuelta atrás. Por eso simula
+   siempre primero, enseña el número, y la confirmación dice la palabra
+   «permanentemente» en vez de un «¿seguro?» que nadie lee. */
+$('btnBorrarDuplicados').onclick = async (e) => {
+  e.target.disabled = true;
+  const original = e.target.textContent;
+  e.target.textContent = 'Revisando…';
+  try {
+    const res = await pedir('/api/duplicados/eliminar', { method: 'POST' });
+    const data = await res.json();
+    e.target.disabled = false;
+    e.target.textContent = original;
+
+    if (!res.ok) { banner('err', data.error?.message || 'No se pudo revisar.'); return; }
+
+    const r = data.resumen;
+    if (r.aBorrar === 0) {
+      banner('ok',
+        `No hay ningún duplicado que se pueda borrar sin riesgo. ` +
+        `De ${r.gruposRevisados} códigos repetidos, ${r.gruposIntocables} necesitan que los mires a mano.`);
+      show(data.intocables);
+      return;
+    }
+
+    if (!confirm(
+      `Se van a borrar PERMANENTEMENTE ${r.aBorrar} productos de tu tienda.\n\n` +
+      `Sólo se borran los que son borrador, sin imagen, de una sola variante, y ` +
+      `siempre queda uno vivo por cada código.\n\n` +
+      `Los otros ${r.gruposIntocables} códigos repetidos no se tocan.\n\n` +
+      `Shopify no tiene papelera: esto no se deshace. ¿Continuar?`
+    )) {
+      banner('ok', 'Cancelado. No se ha borrado nada.');
+      return;
+    }
+
+    e.target.disabled = true;
+    e.target.textContent = 'Borrando…';
+    const res2 = await pedir('/api/duplicados/eliminar?confirmar=si', { method: 'POST' });
+    const data2 = await res2.json();
+    e.target.disabled = false;
+    e.target.textContent = original;
+
+    if (!res2.ok) { banner('err', data2.error?.message || 'No se pudo borrar.'); return; }
+
+    const b = data2.resultado;
+    banner(
+      b.fallidos > 0 ? 'err' : 'ok',
+      `Borrados ${b.borrados} duplicados.` +
+        (b.fallidos > 0 ? ` ${b.fallidos} fallaron. Motivo: ${b.errores[0]?.mensaje ?? ''}` : ''),
+    );
+    if (b.errores?.length) show(b.errores);
+  } catch (err) {
+    banner('err', 'Error de red durante el borrado.');
+    e.target.disabled = false;
+    e.target.textContent = original;
+  }
 };
 
 /* ── Pedidos y emisión de comprobantes ───────────────────────────────────────

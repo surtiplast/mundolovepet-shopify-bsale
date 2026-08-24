@@ -6,8 +6,12 @@
  * producto legítimo fiándose de la app. Por eso la mayoría de estas pruebas
  * comprueban lo que NO debe aparecer en el informe.
  */
-import { describe, expect, it } from 'vitest';
-import { buscarDuplicados } from '../src/services/duplicates.service.js';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  buscarDuplicados,
+  planificarBorradoDuplicados,
+  borrarDuplicados,
+} from '../src/services/duplicates.service.js';
 import type { ShopifyVariant } from '../src/integrations/shopify/client.js';
 
 function v(id: string, campos: Partial<ShopifyVariant> = {}): ShopifyVariant {
@@ -24,8 +28,14 @@ function v(id: string, campos: Partial<ShopifyVariant> = {}): ShopifyVariant {
     title: 'Default',
     estado: 'ACTIVE',
     tieneImagen: true,
+    variantesDelProducto: 1,
     ...campos,
   };
+}
+
+/** Una variante con la pinta exacta de las que crea la app: borrador, sin foto. */
+function creadaPorLaApp(id: string, campos: Partial<ShopifyVariant> = {}): ShopifyVariant {
+  return v(id, { estado: 'DRAFT', tieneImagen: false, ...campos });
 }
 
 describe('buscarDuplicados', () => {
@@ -155,5 +165,138 @@ describe('buscarDuplicados', () => {
   it('no lanza con un catálogo vacío', () => {
     expect(() => buscarDuplicados([])).not.toThrow();
     expect(buscarDuplicados([]).resumen.codigosRepetidos).toBe(0);
+  });
+});
+
+/**
+ * Pruebas del borrado.
+ *
+ * Aquí el riesgo cambia de naturaleza. El informe como mucho acusa en falso;
+ * esto **borra productos de una tienda real y Shopify no tiene papelera**. Así
+ * que casi todas las pruebas comprueban lo que NO se borra: un publicado, uno
+ * con foto, uno que comparte producto con otra talla, y el último superviviente
+ * de un código. Que borre lo que debe se comprueba una vez; que no borre lo que
+ * no debe, muchas.
+ */
+describe('planificarBorradoDuplicados', () => {
+  it('borra el sobrante cuando uno está publicado y el otro lo creó la app', () => {
+    const informe = buscarDuplicados([
+      v('bueno', { sku: 'REPE' }),
+      creadaPorLaApp('copia', { sku: 'REPE' }),
+    ]);
+    const plan = planificarBorradoDuplicados(informe);
+
+    expect(plan.candidatos).toHaveLength(1);
+    expect(plan.candidatos[0]!.variantId).toBe('copia');
+    expect(plan.candidatos[0]!.sobrevive.productId).toBe('bueno-prod');
+  });
+
+  it('no borra un producto publicado, por mucho que el código esté repetido', () => {
+    const informe = buscarDuplicados([
+      v('uno', { sku: 'REPE' }),
+      v('dos', { sku: 'REPE' }),
+    ]);
+    const plan = planificarBorradoDuplicados(informe);
+
+    expect(plan.candidatos).toHaveLength(0);
+    expect(plan.intocables).toHaveLength(1);
+  });
+
+  it('no borra un borrador que tiene imagen: alguien pasó por ahí', () => {
+    const informe = buscarDuplicados([
+      v('bueno', { sku: 'REPE' }),
+      creadaPorLaApp('conFoto', { sku: 'REPE', tieneImagen: true }),
+    ]);
+
+    expect(planificarBorradoDuplicados(informe).candidatos).toHaveLength(0);
+  });
+
+  it('no borra un producto de varias variantes: se llevaría la talla buena', () => {
+    const informe = buscarDuplicados([
+      v('bueno', { sku: 'REPE' }),
+      creadaPorLaApp('multi', { sku: 'REPE', variantesDelProducto: 3 }),
+    ]);
+
+    expect(planificarBorradoDuplicados(informe).candidatos).toHaveLength(0);
+  });
+
+  it('no borra cuando no se sabe cuántas variantes tiene el producto', () => {
+    const informe = buscarDuplicados([
+      v('bueno', { sku: 'REPE' }),
+      creadaPorLaApp('desconocido', { sku: 'REPE', variantesDelProducto: null }),
+    ]);
+
+    expect(planificarBorradoDuplicados(informe).candidatos).toHaveLength(0);
+  });
+
+  it('deja uno vivo aunque las tres sean borradores sin imagen', () => {
+    const informe = buscarDuplicados([
+      creadaPorLaApp('a', { sku: 'REPE' }),
+      creadaPorLaApp('b', { sku: 'REPE' }),
+      creadaPorLaApp('c', { sku: 'REPE' }),
+    ]);
+    const plan = planificarBorradoDuplicados(informe);
+
+    expect(plan.candidatos).toHaveLength(2);
+    expect(plan.resumen.aBorrar).toBe(2);
+  });
+
+  it('respeta el límite', () => {
+    const informe = buscarDuplicados([
+      v('bueno1', { sku: 'A' }),
+      creadaPorLaApp('copia1', { sku: 'A' }),
+      v('bueno2', { sku: 'B' }),
+      creadaPorLaApp('copia2', { sku: 'B' }),
+    ]);
+
+    expect(planificarBorradoDuplicados(informe, 1).candidatos).toHaveLength(1);
+  });
+
+  it('explica por qué no toca un grupo, en vez de callarse', () => {
+    const informe = buscarDuplicados([v('uno', { sku: 'REPE' }), v('dos', { sku: 'REPE' })]);
+    const plan = planificarBorradoDuplicados(informe);
+
+    expect(plan.intocables[0]!.motivo).toMatch(/mano/);
+    expect(plan.intocables[0]!.variantes).toBe(2);
+  });
+});
+
+describe('borrarDuplicados', () => {
+  it('no pide dos veces el mismo producto aunque choque por los dos campos', async () => {
+    const eliminar = vi.fn().mockResolvedValue({ ok: true, errores: [] });
+    const plan = {
+      candidatos: [
+        { productId: 'p1', variantId: 'v1', titulo: null, sku: null, barcode: null, codigo: 'a', sobrevive: { productId: 'p9', titulo: null } },
+        { productId: 'p1', variantId: 'v1', titulo: null, sku: null, barcode: null, codigo: 'b', sobrevive: { productId: 'p9', titulo: null } },
+      ],
+      intocables: [],
+      resumen: { gruposRevisados: 2, aBorrar: 2, gruposIntocables: 0 },
+    };
+
+    const r = await borrarDuplicados(eliminar, plan);
+
+    expect(eliminar).toHaveBeenCalledTimes(1);
+    expect(r.borrados).toBe(1);
+  });
+
+  it('un producto que falla no arrastra a los demás', async () => {
+    const eliminar = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, errores: ['no se puede'] })
+      .mockResolvedValueOnce({ ok: true, errores: [] });
+    const plan = {
+      candidatos: [
+        { productId: 'p1', variantId: 'v1', titulo: null, sku: null, barcode: null, codigo: 'a', sobrevive: { productId: 'p9', titulo: null } },
+        { productId: 'p2', variantId: 'v2', titulo: null, sku: null, barcode: null, codigo: 'b', sobrevive: { productId: 'p9', titulo: null } },
+      ],
+      intocables: [],
+      resumen: { gruposRevisados: 2, aBorrar: 2, gruposIntocables: 0 },
+    };
+
+    const r = await borrarDuplicados(eliminar, plan);
+
+    expect(r.borrados).toBe(1);
+    expect(r.fallidos).toBe(1);
+    expect(r.errores[0]!.mensaje).toBe('no se puede');
   });
 });
