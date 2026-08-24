@@ -34,9 +34,17 @@
     --txt:#e8eaf0; --muted:#9aa3b2; --brand:#6d5efc; --brand-2:#8b7dff;
     --ok:#22c55e; --warn:#f59e0b; --err:#ef4444; --info:#38bdf8;
   }
+  /* El fondo era #f5f6fa, un gris azulado muy claro. Sobre él, las tarjetas y
+     las tablas iban en blanco puro, y la diferencia era tan pequeña que el
+     conjunto se leía como una sola superficie crema en vez de como blanco con
+     relieve.
+
+     Ahora el fondo ES blanco y lo que separa las cosas son las líneas, no los
+     rellenos. Por eso `--line` sube un punto de contraste: pasa a cargar sola
+     con la estructura que antes sostenían dos grises casi iguales. */
   @media (prefers-color-scheme: light){
-    :root{ --bg:#f5f6fa; --panel:#fff; --panel-2:#f0f2f7; --line:#e2e6ef;
-           --txt:#12141a; --muted:#606a7b; }
+    :root{ --bg:#ffffff; --panel:#ffffff; --panel-2:#f4f5f8; --line:#dfe2ea;
+           --txt:#12141a; --muted:#5f6a7b; }
   }
   *{box-sizing:border-box}
   /* La misma pila que el admin de Shopify: Inter delante y, si no llegara a
@@ -166,7 +174,7 @@
   /* Salvo cuando hay dos secciones seguidas: ahí sí hace falta separarlas. */
   section + section .cat-titulo{margin-top:22px}
   .cat-resumen{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
-  .cat-chip{border:1px solid var(--line);background:var(--panel);border-radius:999px;
+  .cat-chip{border:1px solid var(--line);background:var(--panel-2);border-radius:999px;
             padding:5px 12px;font-size:12.5px;color:var(--muted)}
   .cat-chip b{color:var(--txt);font-weight:600}
   .cat-chip.alerta{border-color:color-mix(in srgb,var(--err) 45%,var(--line))}
@@ -1481,8 +1489,28 @@ function pestanaDeLaRuta() {
 }
 
 /* Las pestañas de dentro se ocultan cuando Shopify ya dibuja el menú lateral:
-   tenerlas en los dos sitios sería repetir la misma navegación dos veces. */
-if (dentroDeShopify()) $('tabs').hidden = true;
+   tenerlas en los dos sitios es repetir la misma navegación dos veces.
+
+   ── Por qué no se pregunta por App Bridge ─────────────────────────────────
+   Antes esto era `if (dentroDeShopify())`, que comprueba si existe la variable
+   global `shopify`. Y fallaba: esta línea corre mientras el documento se está
+   leyendo, y App Bridge puede no haberse definido todavía. Cuando llegaba
+   tarde, las pestañas ya se habían quedado visibles y ahí seguían, duplicando
+   el menú lateral.
+
+   Estar embebido, en cambio, se sabe desde el primer instante y no depende de
+   que ningún script haya cargado: o la página está dentro de un marco, o
+   Shopify le ha puesto `host`/`embedded` en la dirección. Se miran las tres
+   porque cualquiera basta y ninguna puede llegar tarde. */
+const enElAdminDeShopify = () => {
+  const params = new URLSearchParams(location.search);
+  if (params.has('host') || params.get('embedded') === '1') return true;
+  // Un marco de otro origen hace que leer `window.top` lance. Que lance es
+  // justamente la prueba de que estamos dentro de uno.
+  try { return window.top !== window.self; } catch { return true; }
+};
+
+if (enElAdminDeShopify()) $('tabs').hidden = true;
 
 for (const tab of document.querySelectorAll('.tab')) {
   tab.onclick = () => {
