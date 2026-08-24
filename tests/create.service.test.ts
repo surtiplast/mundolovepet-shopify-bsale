@@ -77,7 +77,12 @@ describe('planificarCreacion', () => {
   });
 
   it('respeta el límite, para probar con cinco antes de crear doscientos', () => {
-    const muchos = Array.from({ length: 50 }, (_, i) => prod({ sku: `C${i}` }));
+    // Cada uno con su propio EAN: productos distintos de verdad. Compartirlo
+    // los convertiría en duplicados y la planificación —con razón— los
+    // descartaría, que es justo lo que prueba el bloque de más abajo.
+    const muchos = Array.from({ length: 50 }, (_, i) =>
+      prod({ sku: `C${i}`, barcode: `EAN-${i}` }),
+    );
     const faltan = muchos.map((p) => p.sku);
 
     expect(planificarCreacion(muchos, faltan, 5).candidatos).toHaveLength(5);
@@ -232,7 +237,11 @@ describe('crearProductos', () => {
         return { ok: true, productId: `gid://p/${n}`, errores: [] };
       }),
     };
-    const productos = [prod({ sku: 'A' }), prod({ sku: 'B' }), prod({ sku: 'C' })];
+    const productos = [
+      prod({ sku: 'A', barcode: 'EAN-A' }),
+      prod({ sku: 'B', barcode: 'EAN-B' }),
+      prod({ sku: 'C', barcode: 'EAN-C' }),
+    ];
     const plan = planificarCreacion(productos, ['A', 'B', 'C']);
 
     const r = await crearProductos(client as never, plan, 'gid://loc/1');
@@ -324,5 +333,105 @@ describe('la marca', () => {
   it('una marca en blanco cuenta como ausente', () => {
     const plan = planificarCreacion([prod({ sku: 'X', brand: '   ' })], ['X']);
     expect(plan.candidatos[0]!.marca).toBeNull();
+  });
+});
+
+/**
+ * El candidato tiene DOS códigos, y los dos pueden chocar.
+ *
+ * Comprobar sólo el SKU dejaba pasar el caso más frecuente de todos: un
+ * artículo con SKU nuevo cuyo EAN ya está en la tienda bajo otro SKU. Se creaba,
+ * nacía duplicado, y el duplicado hay que buscarlo y borrarlo a mano.
+ */
+describe('no crear lo que ya existe, por cualquiera de los dos códigos', () => {
+  it('no crea cuando su código de barras ya está en Shopify con otro SKU', () => {
+    const plan = planificarCreacion(
+      [prod({ sku: 'SKU-NUEVO', barcode: '8009470011310' })],
+      ['SKU-NUEVO'],
+      undefined,
+      new Set(['8009470011310']),
+    );
+
+    expect(plan.candidatos).toHaveLength(0);
+    expect(plan.omitidos[0]!.motivo).toMatch(/código de barras ya está/);
+    expect(plan.resumen.yaExistian).toBe(1);
+  });
+
+  it('sigue sin crear cuando el que choca es el SKU', () => {
+    const plan = planificarCreacion(
+      [prod({ sku: 'REPE', barcode: '111' })],
+      ['REPE'],
+      undefined,
+      new Set(['repe']),
+    );
+
+    expect(plan.candidatos).toHaveLength(0);
+    expect(plan.resumen.yaExistian).toBe(1);
+  });
+
+  it('crea con normalidad cuando no choca ninguno de los dos', () => {
+    const plan = planificarCreacion(
+      [prod({ sku: 'LIMPIO', barcode: '999' })],
+      ['LIMPIO'],
+      undefined,
+      new Set(['otro', '888']),
+    );
+
+    expect(plan.candidatos).toHaveLength(1);
+  });
+
+  it('un candidato sin código de barras no se bloquea a sí mismo', () => {
+    const plan = planificarCreacion(
+      [prod({ sku: 'SINEAN', barcode: null })],
+      ['SINEAN'],
+      undefined,
+      new Set([]),
+    );
+
+    expect(plan.candidatos).toHaveLength(1);
+  });
+
+  /**
+   * El catálogo de Bsale se repite a sí mismo: el mismo artículo dado de alta
+   * dos veces con SKU distinto y el mismo EAN. Sin reservar los códigos dentro
+   * de la pasada, los dos pasaban la comprobación contra Shopify —donde no
+   * estaba ninguno— y la propia pasada creaba el duplicado.
+   */
+  it('dos variantes de Bsale con el mismo EAN: sólo se crea una', () => {
+    const plan = planificarCreacion(
+      [
+        prod({ sku: 'UNO', barcode: 'EAN-COMPARTIDO' }),
+        prod({ sku: 'DOS', barcode: 'EAN-COMPARTIDO' }),
+      ],
+      ['UNO', 'DOS'],
+      undefined,
+      new Set([]),
+    );
+
+    expect(plan.candidatos).toHaveLength(1);
+    expect(plan.candidatos[0]!.sku).toBe('UNO');
+    expect(plan.omitidos[0]!.sku).toBe('DOS');
+  });
+
+  it('dos variantes con SKU distinto y sin EAN se crean las dos', () => {
+    const plan = planificarCreacion(
+      [prod({ sku: 'UNO', barcode: null }), prod({ sku: 'DOS', barcode: null })],
+      ['UNO', 'DOS'],
+      undefined,
+      new Set([]),
+    );
+
+    expect(plan.candidatos).toHaveLength(2);
+  });
+
+  it('la comparación ignora mayúsculas y espacios, como en todo el proyecto', () => {
+    const plan = planificarCreacion(
+      [prod({ sku: 'NUEVO', barcode: ' Ean-1 ' })],
+      ['NUEVO'],
+      undefined,
+      new Set(['ean-1']),
+    );
+
+    expect(plan.candidatos).toHaveLength(0);
   });
 });

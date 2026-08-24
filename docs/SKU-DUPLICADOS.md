@@ -76,3 +76,44 @@ sin foto — los que creó la app.
 
 Si son muchos, se puede añadir un informe que los liste automáticamente
 agrupando las variantes por código.
+
+---
+
+## El hueco que quedaba: el candidato tiene DOS códigos
+
+_24/08/2026_
+
+`planificarCreacion` recibe `codigosEnShopify`, un conjunto con **los SKU y los
+códigos de barras** que la tienda ya conoce. Bien construido. El problema estaba
+en cómo se consultaba:
+
+```ts
+const clave = normalizarSku(p.sku);
+if (codigosEnShopify?.has(clave)) { /* omitir */ }
+```
+
+Sólo se buscaba el SKU del candidato. **Su código de barras no se comprobaba
+nunca**, aunque el comentario de al lado prometiera «por cualquiera de los dos
+campos».
+
+Eso dejaba pasar el caso más frecuente de todos: un artículo con SKU nuevo cuyo
+EAN ya está en la tienda bajo otro SKU. Pasaba la comprobación, se creaba, y
+nacía duplicado.
+
+Ahora se miran los dos, y cada uno con su motivo, porque no significan lo mismo
+para quien lee el informe:
+
+- «Ya existe en Shopify (por SKU o código de barras)» → el SKU choca.
+- «Su código de barras ya está en la tienda con otro SKU» → el EAN choca.
+
+## Y el catálogo que se duplica a sí mismo
+
+Hay un segundo camino, más sutil. Bsale tiene el mismo artículo dado de alta dos
+veces, con SKU distinto y **el mismo EAN del fabricante**. Los dos son nuevos
+para Shopify, así que los dos pasaban la comprobación —correctamente, porque
+ninguno estaba— y **la propia pasada creaba el duplicado**.
+
+De ahí el conjunto `reservados`: un candidato aceptado reserva sus dos códigos
+para el resto de la pasada. El primero se crea; el segundo se omite con su
+motivo. Ninguna comprobación contra Shopify podía atrapar esto, porque el choque
+no era con la tienda: era consigo mismo.

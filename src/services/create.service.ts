@@ -89,18 +89,47 @@ export function planificarCreacion(
   const candidatos: CandidatoCreacion[] = [];
   const omitidos: Array<{ sku: string; motivo: string }> = [];
 
+  /**
+   * Los códigos que esta misma pasada ya ha reservado.
+   *
+   * Hace falta porque el catálogo de Bsale se repite a sí mismo: el mismo
+   * artículo dado de alta dos veces, con SKU distinto y **el mismo EAN del
+   * fabricante**. Sin esto, los dos pasan la comprobación contra Shopify —donde
+   * en efecto no está ninguno— y la pasada crea el duplicado ella sola.
+   */
+  const reservados = new Set<string>();
+
+  const yaExiste = (codigo: string) =>
+    codigo !== '' && (codigosEnShopify?.has(codigo) === true || reservados.has(codigo));
+
   for (const p of catalogo) {
     if (limite !== undefined && candidatos.length >= limite) break;
 
     const clave = normalizarSku(p.sku);
     if (!clave || !faltantes.has(clave)) continue;
 
+    const claveBarcode = normalizarSku(p.barcode);
+
     // La red de seguridad. Si el código ya está en la tienda por cualquiera de
     // los dos campos, no se crea nada aunque el informe dijera que falta.
-    if (codigosEnShopify?.has(clave)) {
+    //
+    // Se miran LOS DOS campos del candidato, no sólo su SKU. Comprobar sólo el
+    // SKU dejaba pasar el caso más común de todos: un artículo con SKU nuevo
+    // cuyo EAN ya está en la tienda bajo otro SKU. Nacía duplicado, y el
+    // duplicado hay que buscarlo y borrarlo a mano.
+    if (yaExiste(clave)) {
       omitidos.push({
         sku: p.sku,
         motivo: 'Ya existe en Shopify (por SKU o código de barras). No se crea para no duplicarlo.',
+      });
+      continue;
+    }
+
+    if (yaExiste(claveBarcode)) {
+      omitidos.push({
+        sku: p.sku,
+        motivo:
+          'Su código de barras ya está en la tienda con otro SKU. No se crea para no duplicarlo.',
       });
       continue;
     }
@@ -118,6 +147,10 @@ export function planificarCreacion(
       omitidos.push({ sku: p.sku, motivo: 'Sin precio, o precio cero, en Bsale' });
       continue;
     }
+
+    // Reservado: ningún otro candidato de esta pasada puede volver a usarlos.
+    reservados.add(clave);
+    if (claveBarcode) reservados.add(claveBarcode);
 
     candidatos.push({
       sku: p.sku,
@@ -141,7 +174,10 @@ export function planificarCreacion(
       total: candidatos.length,
       sinNombre: omitidos.filter((o) => o.motivo.includes('nombre')).length,
       sinPrecio: omitidos.filter((o) => o.motivo.includes('precio')).length,
-      yaExistian: omitidos.filter((o) => o.motivo.includes('Ya existe')).length,
+      // Los dos motivos de duplicado terminan igual —«para no duplicarlo»—, y
+      // el contador se apoya en eso en vez de en el principio de la frase: el
+      // que habla del código de barras no empieza por «Ya existe».
+      yaExistian: omitidos.filter((o) => o.motivo.includes('no duplicarlo')).length,
     },
   };
 }
