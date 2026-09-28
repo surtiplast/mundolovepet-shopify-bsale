@@ -146,6 +146,18 @@
          padding:9px 15px;border-radius:9px;transition:.14s}
   button:hover:not(:disabled){border-color:var(--brand);transform:translateY(-1px)}
   button:disabled{opacity:.5;cursor:not-allowed}
+  /* Los botones «seguros» (Simular, Comparar, Descubrir…) se quedan grises en
+     reposo — no todos pueden ser el verde principal de la sección, se
+     perdería la jerarquía. Pero mientras están deshabilitados por estar
+     trabajando («Simulando…», «Calculando…») si se ponen en teal: la
+     confirmación de que el clic funcionó no debe depender de leer el texto
+     a tiempo. `.primary`/`.peligro` ya tienen su propio color y se dejan
+     igual, sólo atenuados. */
+  button:not(.primary):not(.peligro):disabled{
+    opacity:1;color:var(--brand);border-color:var(--brand);
+    background:color-mix(in srgb,var(--brand) 16%,var(--panel-2));
+    cursor:wait;
+  }
   button.primary{background:var(--brand);border-color:var(--brand);color:#fff}
   button.primary:hover:not(:disabled){background:var(--brand-2)}
 
