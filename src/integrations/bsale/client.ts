@@ -56,7 +56,13 @@ export interface BsaleDocumentType {
   id: number;
   name: string;
   codeSii?: string | null;
-  isElectronicService?: number;
+  /**
+   * `1` si es un tipo de documento electrónico (declarado ante SUNAT), `0` si
+   * no. El nombre real del campo en la API de Bsale es `isElectronicDocument`
+   * — no `isElectronicService`, que es como se llamó aquí por error y nunca
+   * coincidía con nada real (ver `docs/` o `git log` para el porqué).
+   */
+  isElectronicDocument?: number;
   isSalesNote?: number;
   isExempt?: number;
   state?: number;

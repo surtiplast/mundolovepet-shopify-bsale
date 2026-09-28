@@ -145,8 +145,8 @@ describe('BsaleClient · descubrimiento de configuración', () => {
         return jsonResponse({
           count: 2,
           items: [
-            { id: 1, name: 'Boleta Electrónica', isElectronicService: 1, isSalesNote: 0 },
-            { id: 2, name: 'Factura Electrónica', isElectronicService: 1, isSalesNote: 0 },
+            { id: 1, name: 'Boleta Electrónica', isElectronicDocument: 1, isSalesNote: 0 },
+            { id: 2, name: 'Factura Electrónica', isElectronicDocument: 1, isSalesNote: 0 },
           ],
         });
       }

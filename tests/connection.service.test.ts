@@ -209,10 +209,10 @@ describe('ConnectionService · descubrimiento Bsale', () => {
     listDocumentTypes: async () => ({
       count: 4,
       items: [
-        { id: 5, name: 'Nota de Venta', isElectronicService: 0, isSalesNote: 1 },
-        { id: 1, name: 'Boleta Manual', isElectronicService: 0, isSalesNote: 0 },
-        { id: 8, name: 'Boleta Electrónica', isElectronicService: 1, isSalesNote: 0 },
-        { id: 9, name: 'Factura Electrónica', isElectronicService: 1, isSalesNote: 0 },
+        { id: 5, name: 'Nota de Venta', isElectronicDocument: 0, isSalesNote: 1 },
+        { id: 1, name: 'Boleta Manual', isElectronicDocument: 0, isSalesNote: 0 },
+        { id: 8, name: 'Boleta Electrónica', isElectronicDocument: 1, isSalesNote: 0 },
+        { id: 9, name: 'Factura Electrónica', isElectronicDocument: 1, isSalesNote: 0 },
       ],
     }),
     listTaxes: async () => ({ count: 1, items: [{ id: 1, name: 'IGV', percentage: 18 }] }),

@@ -362,7 +362,7 @@ export class ConnectionService {
       documentTypes: documentTypes.items.map((d) => ({
         id: d.id,
         name: d.name,
-        isElectronic: d.isElectronicService === 1,
+        isElectronic: d.isElectronicDocument === 1,
         isSalesNote: d.isSalesNote === 1,
       })),
       taxes: taxes.items.map((t) => ({ id: t.id, name: t.name, percentage: t.percentage ?? null })),
@@ -387,7 +387,7 @@ function pickDocumentType(
   const matches = types.filter(
     (t) => new RegExp(keyword, 'i').test(t.name ?? '') && t.isSalesNote !== 1 && t.state !== 1,
   );
-  return matches.find((t) => t.isElectronicService === 1) ?? matches[0];
+  return matches.find((t) => t.isElectronicDocument === 1) ?? matches[0];
 }
 
 /** Barrera final: si algo con pinta de secreto llegó a `metadata`, no sale de aquí. */
