@@ -212,7 +212,11 @@ export async function createApp(
     .replace('__SHOPIFY_API_KEY__', env.SHOPIFY_CLIENT_ID);
 
   const servirPanel = (_req: express.Request, res: express.Response): void => {
-    res.type('html').send(panelHtml);
+    // Sin esto el navegador puede quedarse con una versión vieja del panel
+    // después de un despliegue —Express no manda cabeceras de caché para un
+    // `res.send()` de un string, pero el navegador igual puede decidir
+    // reutilizarla por su cuenta— y el cambio no se ve hasta un F5 forzado.
+    res.set('Cache-Control', 'no-store').type('html').send(panelHtml);
   };
 
   // El menú lateral de Shopify navega con enlaces de verdad, así que cada
