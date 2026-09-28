@@ -31,38 +31,41 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bg:#0f1115; --panel:#171a21; --panel-2:#1e222b; --line:#2a2f3a;
-    --txt:#e8eaf0; --muted:#9aa3b2;
-    /* Teal y naranja del logo de Mundo Love Pet (muestreados del propio
-       archivo): --brand un punto más oscuro que el teal real para que el
-       texto blanco de los botones tenga contraste de sobra; --brand-2 es el
-       teal tal cual sale en el logo, para hover y enlaces. */
-    --brand:#3d7373; --brand-2:#519393; --brand-acento:#eeaf39;
-    --ok:#22c55e; --warn:#f59e0b; --err:#ef4444; --info:#38bdf8;
-  }
-  /* El fondo era #f5f6fa, un gris azulado muy claro. Sobre él, las tarjetas y
-     las tablas iban en blanco puro, y la diferencia era tan pequeña que el
-     conjunto se leía como una sola superficie crema en vez de como blanco con
-     relieve.
-
-     Ahora el fondo ES blanco y lo que separa las cosas son las líneas, no los
-     rellenos. Por eso `--line` sube un punto de contraste: pasa a cargar sola
-     con la estructura que antes sostenían dos grises casi iguales. */
-  @media (prefers-color-scheme: light){
-    :root{ --bg:#ffffff; --panel:#ffffff; --panel-2:#f4f5f8; --line:#dfe2ea;
-           --txt:#12141a; --muted:#5f6a7b; }
+    /* Estos valores no son una aproximación: se muestrearon en vivo del propio
+       admin de Shopify (computedStyle + las custom properties --p-* que pone
+       Polaris en :root) el 28/9/2026. El admin YA NO usa verde como color
+       principal — desde el rediseño a este Polaris monocromo, el botón de
+       acción es negro casi puro (`Agregar producto`, `Guardar`…), y el verde
+       queda sólo para el isotipo de Shopify. Copiarlo tal cual es lo que hace
+       que el panel se sienta parte del admin y no una página aparte cargada
+       en un marco. */
+    --bg:#f1f1f1; --panel:#ffffff; --panel-2:#f7f7f7; --line:#e3e3e3;
+    --txt:#303030; --muted:#6b6b6b;
+    --brand:#1a1a1a; --brand-2:#303030;
+    /* El teal/naranja del logo de Mundo Love Pet ya no se usa para nada
+       interactivo —competiría con el negro de Shopify—, se deja sólo por si
+       hace falta un acento puntual en el futuro. */
+    --brand-acento:#519393;
+    --ok:#22c55e; --warn:#f59e0b; --err:#8e0b21; --info:#38bdf8;
+    --radius-sm:8px; --radius-lg:12px;
+    /* `--p-shadow-100` de Polaris, la sombra que usan sus tarjetas en vez de
+       un borde. Los números vienen en rem porque así los da Shopify; a 16px
+       por rem equivalen a los px de abajo. */
+    --shadow-card:0 5px 5px -2px rgb(0 0 0 / 3%),0 3px 3px -1.5px rgb(0 0 0 / 2%),
+                  0 2px 2px -1px rgb(0 0 0 / 2%),0 1px 1px -.5px rgb(0 0 0 / 3%),
+                  0 0.5px 0.5px 0 rgb(0 0 0 / 4%),0 0 0 1px rgb(0 0 0 / 6%);
   }
   *{box-sizing:border-box}
   /* La misma pila que el admin de Shopify: Inter delante y, si no llegara a
      cargar, los tipos del sistema en el orden que ellos usan. Así el panel se
-     ve igual dentro del admin que por su URL. */
+     ve igual dentro del admin que por su URL. El tamaño (13px) y el
+     interletraje también son los suyos, no una aproximación. */
   body{margin:0;background:var(--bg);color:var(--txt);
-       font:14px/1.5 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,
+       font:13px/1.5 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,
             "Helvetica Neue",sans-serif;
-       /* Shopify aprieta ligeramente el interletraje del cuerpo de texto. */
-       letter-spacing:-0.005em;
+       letter-spacing:-0.006em;
        -webkit-font-smoothing:antialiased}
-  a{color:var(--brand-2)}
+  a{color:#005bd3}
   /* Antes 1080px centrados. Con 3.239 productos en una tabla, ese ancho
      obligaba a desplazarse en horizontal para leer precio y stock a la vez,
      que es justo la comparación para la que existe la tabla. */
@@ -91,7 +94,9 @@
 
 
   .grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}
+  /* Las tarjetas de Polaris no llevan borde: lo que las separa del fondo gris
+     es la sombra (`--shadow-card`, la misma que usa Shopify), no una línea. */
+  .card{background:var(--panel);box-shadow:var(--shadow-card);border-radius:var(--radius-lg);padding:18px}
   .card h2{font-size:15px;margin:0 0 4px;display:flex;align-items:center;gap:9px}
   .card .desc{color:var(--muted);font-size:13px;margin:0 0 14px}
 
@@ -141,10 +146,14 @@
      que cambiar de pestaña «resucitara» tablas vacías. */
   .fuera-de-pestana{display:none !important}
   .tab-nota{color:var(--muted);font-size:13px;margin:0 0 14px;max-width:70ch}
+  /* El botón «secundario» de Polaris es blanco sobre el fondo gris de la
+     página, con un borde fino y una sombra casi imperceptible — no el salto
+     hacia arriba que tenía antes al pasar el mouse, que Shopify no hace. */
   button{font:inherit;font-size:13px;font-weight:500;cursor:pointer;
-         border:1px solid var(--line);background:var(--panel-2);color:var(--txt);
-         padding:9px 15px;border-radius:9px;transition:.14s}
-  button:hover:not(:disabled){border-color:var(--brand);transform:translateY(-1px)}
+         border:1px solid var(--line);background:var(--panel);color:var(--txt);
+         padding:8px 14px;border-radius:var(--radius-sm);transition:.1s;
+         box-shadow:0 1px 0 0 rgb(0 0 0 / 5%)}
+  button:hover:not(:disabled){background:var(--panel-2);border-color:#c9c9c9}
   button:disabled{opacity:.5;cursor:not-allowed}
   /* Los botones «seguros» (Simular, Comparar, Descubrir…) se quedan grises en
      reposo — no todos pueden ser el verde principal de la sección, se
@@ -179,7 +188,7 @@
      tabla, todos los días, aunque sólo hagan falta la primera vez. Plegados
      ocupan una, y siguen ahí para quien los necesite. */
   .ayuda{margin:0 0 10px;font-size:12.5px;color:var(--muted)}
-  .ayuda summary{cursor:pointer;color:var(--brand-2);width:fit-content;
+  .ayuda summary{cursor:pointer;color:#005bd3;width:fit-content;
                  list-style-position:inside}
   .ayuda summary:hover{text-decoration:underline}
   .ayuda[open] summary{margin-bottom:7px}
