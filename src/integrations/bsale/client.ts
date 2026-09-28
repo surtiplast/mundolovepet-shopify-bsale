@@ -426,9 +426,16 @@ export class BsaleClient {
       if (!Number.isFinite(valor) || valor <= 0) return null;
       return valor;
     } catch (error) {
-      // Un 404 aquí significa «sin costo», no «algo va mal».
-      logger.debug({ variantId, err: (error as Error).message }, 'Sin costo en Bsale');
-      return null;
+      // Un 404 aquí significa «sin costo», no «algo va mal» — pero sólo un 404.
+      // Cualquier otro fallo (500, timeout tras los reintentos, 401) no dice
+      // nada sobre si la variante tiene costo: tratarlo igual que un 404
+      // maquillaría una falla real de Bsale como «este producto no tiene
+      // costo», silenciosamente, en medio de una creación por lotes.
+      if (error instanceof IntegrationError && error.status === 404) {
+        logger.debug({ variantId }, 'Sin costo en Bsale');
+        return null;
+      }
+      throw error;
     }
   }
 

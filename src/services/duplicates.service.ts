@@ -112,10 +112,14 @@ export function buscarDuplicados(variantes: ShopifyVariant[]): InformeDuplicados
     const barcode = normalizarSku(v.barcode);
 
     if (sku) porSku.set(sku, [...(porSku.get(sku) ?? []), v]);
-    // Si el código de barras es igual al SKU no se indexa aparte: sería el
-    // mismo choque contado dos veces. Pasa en los productos que la app creó
-    // antes de arreglar el código de barras.
-    if (barcode && barcode !== sku) {
+    // Antes se omitía indexar aquí cuando barcode===sku, pensando que evitaba
+    // contar el mismo choque dos veces. No hacía falta: `anadir()` exige
+    // lista.length>=2 en CADA mapa por separado, así que una variante sola
+    // nunca se duplica consigo misma. Y omitirla tenía un costo real: si esa
+    // misma variante (sku='REPE', barcode='REPE', el propio bug que este
+    // archivo documenta) comparte barcode con OTRA variante de sku distinto,
+    // quedaba fuera de `porBarcode` y esa colisión real no se detectaba.
+    if (barcode) {
       porBarcode.set(barcode, [...(porBarcode.get(barcode) ?? []), v]);
     }
   }

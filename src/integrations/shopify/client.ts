@@ -1117,7 +1117,13 @@ export class ShopifyClient {
    * Ahora `barcode` se manda sólo si Bsale tiene uno, y si no se omite.
    */
   async crearProductoBorrador(p: ProductoNuevo): Promise<ResultadoCreacion> {
-    const data = await this.query<{
+    // `this.queryOnce`, no `this.query`: a diferencia de `fijarInventario`,
+    // `productSet` no admite una `idempotencyKey`. Si el auto-reintento de
+    // `query()` reenviara esta mutación tras un timeout ambiguo (la respuesta
+    // se perdió pero el producto sí se creó), Shopify no tiene forma de saber
+    // que es el mismo intento y crearía un segundo producto duplicado. Mejor
+    // fallar una vez, visible, que arriesgar el duplicado silencioso.
+    const data = await this.queryOnce<{
       productSet: {
         product: { id: string } | null;
         userErrors: Array<{ field: string[] | null; message: string }>;
@@ -1229,6 +1235,14 @@ export class ShopifyClient {
     const raw = await response.text();
 
     if (!response.ok) {
+      if (response.status === 429) {
+        // Un 429 a nivel HTTP no trae `extensions.cost.throttleStatus` en el
+        // cuerpo: la lectura que tengamos guardada es de otra petición, y
+        // usarla para calcular la espera del reintento daría un número
+        // completamente ajeno al bucket real en este momento. Se invalida
+        // para que `retryDelayMs` caiga al backoff exponencial.
+        this.lastThrottle = null;
+      }
       throw new IntegrationError(this.describeHttpError(response.status), {
         provider: 'SHOPIFY',
         status: response.status,

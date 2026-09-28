@@ -130,7 +130,16 @@ async function main(): Promise<void> {
   };
 
   const planStock = planificar(informe.emparejados, 'STOCK');
-  if (planStock.cambios.length > 0 && locationId) {
+  if (planStock.cambios.length > 0) {
+    // Si hay cambios reales pero no se encontró sucursal, esto NO es «sin
+    // cambios»: es un fallo. Confundirlos dejaría el cron en verde mientras el
+    // stock se desincroniza sin que nadie se entere (ver routes/sync.ts, que sí
+    // distingue los dos casos).
+    if (!locationId) {
+      throw new Error(
+        'Hay cambios de stock pendientes pero no se encontró ninguna sucursal activa en Shopify.',
+      );
+    }
     await service.usarShopify(
       env.SHOPIFY_SHOP_DOMAIN,
       env.SHOPIFY_API_VERSION,

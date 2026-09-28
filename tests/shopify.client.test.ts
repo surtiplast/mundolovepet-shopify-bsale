@@ -170,3 +170,78 @@ describe('ShopifyClient · errores', () => {
     ).rejects.toMatchObject({ retryable: false });
   });
 });
+
+describe('ShopifyClient · crearProductoBorrador (idempotencia)', () => {
+  const producto = {
+    titulo: 'Producto de prueba',
+    sku: 'SKU-1',
+    barcode: null,
+    marca: null,
+    precio: 10,
+    costo: null,
+    stock: 5,
+    locationId: 'gid://shopify/Location/1',
+  };
+
+  /**
+   * A diferencia de `testConnection` (que sí pasa por `query()` y reintenta),
+   * `productSet` no tiene una `idempotencyKey`: un timeout ambiguo no debe
+   * reenviar la misma creación, porque el producto pudo haberse creado ya del
+   * lado de Shopify. Se comprueba contando cuántas veces se llamó a `fetch`.
+   */
+  it('NO reintenta cuando la petición falla de forma reintentable (a diferencia de otras mutaciones)', async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new DOMException('aborted', 'AbortError');
+    });
+    const client = makeClient(fetchMock as unknown as typeof fetch, 3);
+
+    await expect(client.crearProductoBorrador(producto)).rejects.toMatchObject({
+      provider: 'SHOPIFY',
+      retryable: true,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('crea el producto cuando Shopify responde bien', async () => {
+    const fetchMock = vi.fn(async () =>
+      gqlResponse({
+        data: { productSet: { product: { id: 'gid://shopify/Product/1' }, userErrors: [] } },
+      }),
+    );
+    const client = makeClient(fetchMock as unknown as typeof fetch, 3);
+
+    const r = await client.crearProductoBorrador(producto);
+    expect(r).toEqual({ ok: true, productId: 'gid://shopify/Product/1', errores: [] });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ShopifyClient · backoff ante 429', () => {
+  it('invalida el throttleStatus cacheado cuando llega un 429 sin cuerpo GraphQL', async () => {
+    let llamada = 0;
+    const fetchMock = vi.fn(async () => {
+      llamada += 1;
+      // Primera llamada: éxito, deja un throttleStatus «sano» cacheado.
+      if (llamada === 1) return gqlResponse(shopPayload);
+      // Segunda: un 429 puro, sin extensions.cost.throttleStatus en el cuerpo.
+      return gqlResponse({}, 429);
+    });
+
+    const client = new ShopifyClient({
+      shopDomain: SHOP,
+      accessToken: TOKEN,
+      fetchImpl: fetchMock as unknown as typeof fetch,
+      maxRetries: 1, // sin reintento automático: se inspecciona el estado tras el fallo
+      sleep: async () => {},
+    });
+
+    await client.testConnection();
+    expect(client.throttleStatus).not.toBeNull();
+
+    await expect(client.testConnection()).rejects.toMatchObject({ code: 'THROTTLED' });
+
+    // Antes del fix, aquí seguía la lectura «sana» de la primera llamada — y
+    // `retryDelayMs` la habría usado para calcular una espera casi nula.
+    expect(client.throttleStatus).toBeNull();
+  });
+});

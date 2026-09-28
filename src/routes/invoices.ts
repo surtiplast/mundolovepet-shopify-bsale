@@ -54,7 +54,7 @@ function configuracion(env: Env): ConfigComprobante {
     throw new IntegrationError(
       `Faltan variables de entorno para emitir: ${faltan.join(', ')}. ` +
         'Pulsa «Descubrir configuración de Bsale» y ponlas en Render.',
-      { provider: 'BSALE', retryable: false },
+      { provider: 'BSALE', retryable: false, code: 'CONFIG_MISSING' },
     );
   }
 
@@ -97,6 +97,21 @@ function resumirParaPanel(plan: PlanComprobante) {
     lineas: plan.pedido.lineas.length,
   };
 }
+
+/**
+ * Pedidos con una emisión en curso en este proceso.
+ *
+ * ── Por qué hace falta ───────────────────────────────────────────────────────
+ *
+ * El único candado real contra emitir dos veces es el `salesId` en Bsale, pero
+ * ese candado vive del lado de Bsale y sólo actúa cuando la petición LLEGA
+ * allí. Si dos peticiones para el mismo pedido (doble clic, un reintento del
+ * navegador) entran casi a la vez, las dos pasan la comprobación de «¿ya está
+ * facturado?» —que mira nuestra base, y ninguna lo ha registrado todavía— y las
+ * dos llaman a Bsale. Este candado cierra esa ventana: la segunda petición para
+ * el mismo pedido se rechaza de inmediato en vez de llegar a Bsale.
+ */
+const emisionesEnCurso = new Set<string>();
 
 export function invoicesRouter(
   service: ConnectionService,
@@ -204,9 +219,24 @@ export function invoicesRouter(
         });
       }
 
-      const resultado = await service.usarBsale(env.BSALE_API_BASE_URL, (bsale) =>
-        emitirComprobante(bsale, plan),
-      );
+      const ordenId = plan.pedido.legacyId;
+      if (emisionesEnCurso.has(ordenId)) {
+        return res.status(409).json({
+          error: {
+            message: 'Ya hay una emisión en curso para este pedido. Espera a que termine.',
+          },
+        });
+      }
+      emisionesEnCurso.add(ordenId);
+
+      let resultado;
+      try {
+        resultado = await service.usarBsale(env.BSALE_API_BASE_URL, (bsale) =>
+          emitirComprobante(bsale, plan),
+        );
+      } finally {
+        emisionesEnCurso.delete(ordenId);
+      }
 
       if (!resultado.ok) {
         logger.error({ pedido: plan.pedido.nombre, error: resultado.error }, 'Emisión fallida');
@@ -386,5 +416,9 @@ function responderError(res: Response, error: unknown, mensaje: string): void {
       ? error
       : new IntegrationError(mensaje, { provider: 'BSALE', retryable: false, cause: error });
   logger.error({ err: err.toPublic() }, mensaje);
-  res.status(502).json({ error: err.toPublic() });
+  // Config local faltante (p. ej. IDs de Bsale sin descubrir) no es un fallo del
+  // proveedor: es un 400, igual que el mismo caso en catalog.ts. Un 502 aquí
+  // haría que el monitoreo lo confundiera con una caída real de Bsale.
+  const status = err.code === 'CONFIG_MISSING' ? 400 : 502;
+  res.status(status).json({ error: err.toPublic() });
 }

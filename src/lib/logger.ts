@@ -1,11 +1,18 @@
 /**
  * Logger de aplicación.
  *
- * pino con redacción activada a nivel de librería, además de nuestro `redact()`
- * para el contenido que va a la base de datos. Dos capas, porque un token
- * filtrado en un log es un incidente de seguridad, no una molestia.
+ * Dos capas de redacción, porque un token filtrado en un log es un incidente
+ * de seguridad, no una molestia:
+ *
+ *  1. El `redact` de pino, por RUTA exacta (`*.token`, `*.secret`...). Rápido,
+ *     pero sólo cubre las formas que alguien previó al escribir la lista.
+ *  2. `redact()` de `mask.ts` corriendo sobre TODO objeto que se loguea, vía
+ *     `formatters.log`. Recorre cualquier estructura anidada y censura por
+ *     nombre de clave sin importar la ruta — la red que atrapa lo que la
+ *     lista de rutas no supo prever.
  */
 import pino from 'pino';
+import { redact } from './mask.js';
 
 export const logger = pino({
   level: process.env.LOG_LEVEL ?? (process.env.NODE_ENV === 'production' ? 'info' : 'debug'),
@@ -24,6 +31,9 @@ export const logger = pino({
       '*.secret',
     ],
     censor: '[REDACTADO]',
+  },
+  formatters: {
+    log: (object) => redact(object) as Record<string, unknown>,
   },
   base: { app: 'mundolovepet-sync' },
   timestamp: pino.stdTimeFunctions.isoTime,

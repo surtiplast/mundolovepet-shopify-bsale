@@ -85,6 +85,20 @@ export class ConnectionService {
   ) => ShopifyClient;
   private readonly now: () => Date;
 
+  /**
+   * El `ShopifyTokenProvider` de la última llamada, cacheado.
+   *
+   * ── Por qué hace falta ───────────────────────────────────────────────────
+   *
+   * `usarShopify` se llama varias veces por operación (leer variantes, aplicar
+   * stock, aplicar precios...). Sin este caché, cada llamada construía un
+   * `ShopifyTokenProvider` nuevo — con su caché de token vacía — así que un
+   * `sincronizar.ts` de tres pasos pedía tres tokens nuevos a Shopify en vez de
+   * reutilizar el mismo, desperdiciando peticiones y mandando el client_secret
+   * tres veces en vez de una.
+   */
+  private shopifyProviderCache: { key: string; proveedor: ShopifyTokenProvider } | null = null;
+
   constructor(deps: ConnectionServiceDeps) {
     this.store = deps.store;
     this.key = deps.encryptionKey;
@@ -96,7 +110,7 @@ export class ConnectionService {
         // El proveedor pide el token con client credentials y lo renueva antes
         // de que caduque. Se pasa como función: el cliente lo resuelve en cada
         // petición, así que nunca trabaja con un token vencido.
-        const proveedor = new ShopifyTokenProvider({ shopDomain, clientId, clientSecret });
+        const proveedor = this.obtenerProveedorShopify(clientSecret, shopDomain, clientId);
         return new ShopifyClient({
           accessToken: () => proveedor.getToken(),
           shopDomain,
@@ -104,6 +118,20 @@ export class ConnectionService {
         });
       });
     this.now = deps.now ?? (() => new Date());
+  }
+
+  private obtenerProveedorShopify(
+    clientSecret: string,
+    shopDomain: string,
+    clientId: string,
+  ): ShopifyTokenProvider {
+    const claveCache = `${shopDomain}::${clientId}::${clientSecret}`;
+    if (this.shopifyProviderCache?.key === claveCache) {
+      return this.shopifyProviderCache.proveedor;
+    }
+    const proveedor = new ShopifyTokenProvider({ shopDomain, clientId, clientSecret });
+    this.shopifyProviderCache = { key: claveCache, proveedor };
+    return proveedor;
   }
 
   // ── Guardado de credenciales ───────────────────────────────────────────────

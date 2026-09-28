@@ -17,6 +17,7 @@
 import type { ShopifyClient, ProductoNuevo } from '../integrations/shopify/client.js';
 import type { ProductoGuardado } from '../db/catalog.store.js';
 import { normalizarSku } from './catalog.service.js';
+import { logger } from '../lib/logger.js';
 
 export interface CandidatoCreacion {
   sku: string;
@@ -198,22 +199,36 @@ export function planificarCreacion(
 export async function anadirCostos(
   plan: PlanCreacion,
   obtenerCosto: (variantId: number) => Promise<number | null>,
-): Promise<{ conCosto: number; sinCosto: number }> {
+): Promise<{ conCosto: number; sinCosto: number; erroresCosto: number }> {
   let conCosto = 0;
   let sinCosto = 0;
+  let erroresCosto = 0;
 
   for (const c of plan.candidatos) {
     if (c.bsaleVariantId === null || c.bsaleVariantId <= 0) {
       sinCosto++;
       continue;
     }
-    const costo = await obtenerCosto(c.bsaleVariantId);
-    c.costo = costo;
-    if (costo === null) sinCosto++;
-    else conCosto++;
+    // `obtenerCosto` ya sólo trata el 404 real como «sin costo»; cualquier
+    // otro fallo (Bsale caído, timeout) se captura aquí para que un tropiezo
+    // en una variante no aborte la creación de las demás, pero se cuenta
+    // aparte de `sinCosto` para que no se confunda con un dato legítimo.
+    try {
+      const costo = await obtenerCosto(c.bsaleVariantId);
+      c.costo = costo;
+      if (costo === null) sinCosto++;
+      else conCosto++;
+    } catch (error) {
+      c.costo = null;
+      erroresCosto++;
+      logger.warn(
+        { bsaleVariantId: c.bsaleVariantId, err: (error as Error).message },
+        'No se pudo consultar el costo en Bsale; se crea sin costo',
+      );
+    }
   }
 
-  return { conCosto, sinCosto };
+  return { conCosto, sinCosto, erroresCosto };
 }
 
 /**

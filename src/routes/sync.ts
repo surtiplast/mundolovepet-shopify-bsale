@@ -57,6 +57,36 @@ const syncLimiter = rateLimit({
   message: { error: 'Demasiadas sincronizaciones seguidas. Espera unos minutos.' },
 });
 
+/**
+ * Candado contra operaciones de escritura concurrentes.
+ *
+ * `apply`, `crear`, `reparar` y `duplicados/eliminar` leen la tienda, calculan
+ * un plan y luego escriben. Si dos de estas peticiones corren a la vez —dos
+ * pestañas, un doble clic, un reintento— ambas calculan el plan sobre la misma
+ * foto de Shopify y ninguna ve lo que la otra ya está creando/borrando: el caso
+ * más claro es `/sync/crear`, donde dos ejecuciones concurrentes pueden decidir
+ * que el mismo SKU «falta» y crearlo dos veces, justo el bug de duplicados que
+ * `create.service.ts` existe para evitar.
+ *
+ * Un candado en memoria basta: la app corre en un solo proceso.
+ */
+let operacionEnCurso: string | null = null;
+
+async function conCandado<T>(nombre: string, fn: () => Promise<T>): Promise<T> {
+  if (operacionEnCurso) {
+    throw new IntegrationError(
+      `Ya hay una operación de sincronización en curso (${operacionEnCurso}). Espera a que termine.`,
+      { provider: 'SHOPIFY', retryable: false, code: 'SYNC_BUSY' },
+    );
+  }
+  operacionEnCurso = nombre;
+  try {
+    return await fn();
+  } finally {
+    operacionEnCurso = null;
+  }
+}
+
 function tipoDe(req: Request): TipoSync | null {
   const t = String(req.query.tipo ?? '').toUpperCase();
   return t === 'STOCK' || t === 'PRECIO' ? t : null;
@@ -169,42 +199,45 @@ export function syncRouter(service: ConnectionService, store: CatalogStore, env:
     const limite = Number(req.query.limite) > 0 ? Number(req.query.limite) : undefined;
 
     try {
-      const { plan, locationId, productoPorVariante } = await calcularPlan(tipo, limite);
+      await conCandado('sync/apply', async () => {
+        const { plan, locationId, productoPorVariante } = await calcularPlan(tipo, limite);
 
-      if (plan.cambios.length === 0) {
-        return res.json({ ok: true, simulacion: false, tipo, resultado: { aplicados: 0, fallidos: 0, errores: [] }, resumen: plan.resumen });
-      }
-
-      let resultado: ResultadoAplicacion = { aplicados: 0, fallidos: 0, errores: [] };
-      if (tipo === 'STOCK') {
-        if (!locationId) {
-          throw new IntegrationError('No se encontró ninguna sucursal activa en Shopify.', {
-            provider: 'SHOPIFY',
-            retryable: false,
-          });
+        if (plan.cambios.length === 0) {
+          res.json({ ok: true, simulacion: false, tipo, resultado: { aplicados: 0, fallidos: 0, errores: [] }, resumen: plan.resumen });
+          return;
         }
-        await service.usarShopify(
-          env.SHOPIFY_SHOP_DOMAIN,
-          env.SHOPIFY_API_VERSION,
-          env.SHOPIFY_CLIENT_ID,
-          async (client) => {
-            resultado = await aplicarStock(client, plan, locationId!);
-          },
-        );
-      } else {
-        await service.usarShopify(
-          env.SHOPIFY_SHOP_DOMAIN,
-          env.SHOPIFY_API_VERSION,
-          env.SHOPIFY_CLIENT_ID,
-          async (client) => {
-            resultado = await aplicarPrecios(client, plan, productoPorVariante);
-          },
-        );
-      }
 
-      logger.info({ tipo, ...resultado, planificados: plan.cambios.length }, 'Sincronización aplicada');
+        let resultado: ResultadoAplicacion = { aplicados: 0, fallidos: 0, errores: [] };
+        if (tipo === 'STOCK') {
+          if (!locationId) {
+            throw new IntegrationError('No se encontró ninguna sucursal activa en Shopify.', {
+              provider: 'SHOPIFY',
+              retryable: false,
+            });
+          }
+          await service.usarShopify(
+            env.SHOPIFY_SHOP_DOMAIN,
+            env.SHOPIFY_API_VERSION,
+            env.SHOPIFY_CLIENT_ID,
+            async (client) => {
+              resultado = await aplicarStock(client, plan, locationId!);
+            },
+          );
+        } else {
+          await service.usarShopify(
+            env.SHOPIFY_SHOP_DOMAIN,
+            env.SHOPIFY_API_VERSION,
+            env.SHOPIFY_CLIENT_ID,
+            async (client) => {
+              resultado = await aplicarPrecios(client, plan, productoPorVariante);
+            },
+          );
+        }
 
-      res.json({ ok: true, simulacion: false, tipo, resultado, resumen: plan.resumen });
+        logger.info({ tipo, ...resultado, planificados: plan.cambios.length }, 'Sincronización aplicada');
+
+        res.json({ ok: true, simulacion: false, tipo, resultado, resumen: plan.resumen });
+      });
     } catch (error) {
       responderError(res, error, 'No se pudo aplicar la sincronización.');
     }
@@ -289,29 +322,31 @@ export function syncRouter(service: ConnectionService, store: CatalogStore, env:
         });
       }
 
-      // El costo se pide justo antes de crear, y sólo de los candidatos: Bsale
-      // lo da variante por variante, así que pedirlo de todo el catálogo serían
-      // miles de peticiones para nada.
-      const costos = await service.usarBsale(env.BSALE_API_BASE_URL, (bsale) =>
-        anadirCostos(plan, (variantId) => bsale.obtenerCosto(variantId)),
-      );
+      await conCandado('sync/crear', async () => {
+        // El costo se pide justo antes de crear, y sólo de los candidatos: Bsale
+        // lo da variante por variante, así que pedirlo de todo el catálogo serían
+        // miles de peticiones para nada.
+        const costos = await service.usarBsale(env.BSALE_API_BASE_URL, (bsale) =>
+          anadirCostos(plan, (variantId) => bsale.obtenerCosto(variantId)),
+        );
 
-      let resultado: ResultadoCreacion = { creados: 0, fallidos: 0, errores: [], ids: [] };
-      await service.usarShopify(
-        env.SHOPIFY_SHOP_DOMAIN,
-        env.SHOPIFY_API_VERSION,
-        env.SHOPIFY_CLIENT_ID,
-        async (client) => {
-          resultado = await crearProductos(client, plan, locationId!);
-        },
-      );
+        let resultado: ResultadoCreacion = { creados: 0, fallidos: 0, errores: [], ids: [] };
+        await service.usarShopify(
+          env.SHOPIFY_SHOP_DOMAIN,
+          env.SHOPIFY_API_VERSION,
+          env.SHOPIFY_CLIENT_ID,
+          async (client) => {
+            resultado = await crearProductos(client, plan, locationId!);
+          },
+        );
 
-      logger.info(
-        { ...resultado, planificados: plan.candidatos.length, ...costos },
-        'Productos creados en borrador',
-      );
+        logger.info(
+          { ...resultado, planificados: plan.candidatos.length, ...costos },
+          'Productos creados en borrador',
+        );
 
-      res.json({ ok: true, simulacion: false, resumen: plan.resumen, resultado, costos });
+        res.json({ ok: true, simulacion: false, resumen: plan.resumen, resultado, costos });
+      });
     } catch (error) {
       responderError(res, error, 'No se pudieron crear los productos.');
     }
@@ -373,19 +408,21 @@ export function syncRouter(service: ConnectionService, store: CatalogStore, env:
         });
       }
 
-      let resultado: ResultadoReparacion = { reparados: 0, fallidos: 0, errores: [] };
-      await service.usarShopify(
-        env.SHOPIFY_SHOP_DOMAIN,
-        env.SHOPIFY_API_VERSION,
-        env.SHOPIFY_CLIENT_ID,
-        async (client) => {
-          resultado = await aplicarReparacion(client, plan);
-        },
-      );
+      await conCandado('sync/reparar', async () => {
+        let resultado: ResultadoReparacion = { reparados: 0, fallidos: 0, errores: [] };
+        await service.usarShopify(
+          env.SHOPIFY_SHOP_DOMAIN,
+          env.SHOPIFY_API_VERSION,
+          env.SHOPIFY_CLIENT_ID,
+          async (client) => {
+            resultado = await aplicarReparacion(client, plan);
+          },
+        );
 
-      logger.info({ campos, ...resultado, ...plan.resumen }, 'Productos reparados');
+        logger.info({ campos, ...resultado, ...plan.resumen }, 'Productos reparados');
 
-      res.json({ ok: true, simulacion: false, campos, resumen: plan.resumen, costos, resultado });
+        res.json({ ok: true, simulacion: false, campos, resumen: plan.resumen, costos, resultado });
+      });
     } catch (error) {
       responderError(res, error, 'No se pudieron reparar los productos.');
     }
@@ -476,19 +513,21 @@ export function syncRouter(service: ConnectionService, store: CatalogStore, env:
           });
         }
 
-        let resultado: ResultadoBorrado = { borrados: 0, fallidos: 0, errores: [] };
-        await service.usarShopify(
-          env.SHOPIFY_SHOP_DOMAIN,
-          env.SHOPIFY_API_VERSION,
-          env.SHOPIFY_CLIENT_ID,
-          async (client) => {
-            resultado = await borrarDuplicados((id) => client.eliminarProducto(id), plan);
-          },
-        );
+        await conCandado('duplicados/eliminar', async () => {
+          let resultado: ResultadoBorrado = { borrados: 0, fallidos: 0, errores: [] };
+          await service.usarShopify(
+            env.SHOPIFY_SHOP_DOMAIN,
+            env.SHOPIFY_API_VERSION,
+            env.SHOPIFY_CLIENT_ID,
+            async (client) => {
+              resultado = await borrarDuplicados((id) => client.eliminarProducto(id), plan);
+            },
+          );
 
-        logger.warn({ ...resultado, ...plan.resumen }, 'Duplicados borrados');
+          logger.warn({ ...resultado, ...plan.resumen }, 'Duplicados borrados');
 
-        res.json({ ok: true, simulacion: false, resumen: plan.resumen, resultado });
+          res.json({ ok: true, simulacion: false, resumen: plan.resumen, resultado });
+        });
       } catch (error) {
         responderError(res, error, 'No se pudieron borrar los duplicados.');
       }
@@ -504,5 +543,6 @@ function responderError(res: Response, error: unknown, mensaje: string): void {
       ? error
       : new IntegrationError(mensaje, { provider: 'SHOPIFY', retryable: false, cause: error });
   logger.error({ err: err.toPublic() }, mensaje);
-  res.status(502).json({ error: err.toPublic() });
+  const status = err.code === 'SYNC_BUSY' ? 409 : 502;
+  res.status(status).json({ error: err.toPublic() });
 }

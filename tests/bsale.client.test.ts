@@ -166,3 +166,35 @@ describe('BsaleClient · descubrimiento de configuración', () => {
     expect(listas.items[0]!.id).toBe(3);
   });
 });
+
+describe('BsaleClient · obtenerCosto', () => {
+  it('devuelve null en un 404 real: la variante no tiene costo registrado', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ error: 'not found' }, 404));
+    const client = makeClient(fetchMock as unknown as typeof fetch, 1);
+
+    await expect(client.obtenerCosto(123)).resolves.toBeNull();
+  });
+
+  it('NO confunde un 500 con «sin costo»: propaga el error', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ error: 'boom' }, 500));
+    const client = makeClient(fetchMock as unknown as typeof fetch, 1);
+
+    await expect(client.obtenerCosto(123)).rejects.toMatchObject({ provider: 'BSALE', status: 500 });
+  });
+
+  it('NO confunde un fallo de red con «sin costo»: propaga el error', async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new TypeError('network down');
+    });
+    const client = makeClient(fetchMock as unknown as typeof fetch, 1);
+
+    await expect(client.obtenerCosto(123)).rejects.toMatchObject({ provider: 'BSALE' });
+  });
+
+  it('devuelve el costo cuando Bsale lo tiene', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ averageCost: '12.5' }));
+    const client = makeClient(fetchMock as unknown as typeof fetch, 1);
+
+    await expect(client.obtenerCosto(123)).resolves.toBe(12.5);
+  });
+});

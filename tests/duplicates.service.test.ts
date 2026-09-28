@@ -87,6 +87,26 @@ describe('buscarDuplicados', () => {
     });
   });
 
+  /**
+   * Antes, una variante con barcode===sku se excluía por completo de la
+   * comparación por código de barras, pensando que evitaba un falso positivo
+   * consigo misma. El efecto real era otro: si esa variante compartía su
+   * código de barras con una OTRA variante de SKU distinto, esa colisión real
+   * quedaba invisible. Es exactamente el patrón que deja el bug histórico que
+   * este archivo documenta (SKU copiado al código de barras).
+   */
+  it('detecta un código de barras compartido aunque en una variante sea igual a su SKU', () => {
+    const inf = buscarDuplicados([
+      v('a', { sku: 'REPE', barcode: 'REPE' }),
+      v('b', { sku: 'OTRO', barcode: 'REPE' }),
+    ]);
+
+    expect(inf.grupos).toHaveLength(1);
+    expect(inf.grupos[0]!.codigo).toBe('repe');
+    expect(inf.grupos[0]!.campo).toBe('barcode');
+    expect(inf.grupos[0]!.variantes.map((x) => x.variantId).sort()).toEqual(['a', 'b']);
+  });
+
   it('un choque por los dos campos sale UNA vez, marcado como «ambos»', () => {
     const inf = buscarDuplicados([
       v('a', { sku: 'CODIGO', barcode: 'OTRO' }),

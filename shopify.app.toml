@@ -20,10 +20,10 @@
 ###
 ### Es lo más rápido si no tienes la Shopify CLI instalada.
 
-client_id = "RELLENAR-el-client-id-del-dev-dashboard"
+client_id = "6476a758a133712a53d3a8caa2fa1bd6"
 name = "Mundo Love Pet — Bsale"
 handle = "mundolovepet-bsale"
-application_url = "https://RELLENAR-tu-servicio.onrender.com"
+application_url = "https://sync.mundolovepet.com.pe"
 
 # La clave de todo esto. `true` hace que la app se abra DENTRO del admin, en un
 # marco, con su token de sesión. Con `false` Shopify la abriría en una pestaña
@@ -40,7 +40,7 @@ scopes = "read_products,write_products,read_inventory,write_inventory,read_order
 # Shopify exige al menos una URL de redirección aunque la app no haga el flujo
 # OAuth clásico. Debe estar bajo el mismo dominio que `application_url`.
 redirect_urls = [
-  "https://RELLENAR-tu-servicio.onrender.com/api/auth/callback",
+  "https://sync.mundolovepet.com.pe/api/auth/callback",
 ]
 
 [webhooks]

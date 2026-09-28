@@ -30,6 +30,7 @@
 import type { ShopifyClient, ShopifyVariant } from '../integrations/shopify/client.js';
 import type { ProductoGuardado } from '../db/catalog.store.js';
 import { normalizarSku } from './catalog.service.js';
+import { logger } from '../lib/logger.js';
 
 export interface Reparacion {
   sku: string;
@@ -188,9 +189,10 @@ export function planificarReparacion(
 export async function anadirCostosReparacion(
   plan: PlanReparacion,
   obtenerCosto: (variantId: number) => Promise<number | null>,
-): Promise<{ conCosto: number; sinCosto: number }> {
+): Promise<{ conCosto: number; sinCosto: number; erroresCosto: number }> {
   let conCosto = 0;
   let sinCosto = 0;
+  let erroresCosto = 0;
 
   for (const r of plan.reparaciones) {
     if (r.costo === undefined) continue;
@@ -201,13 +203,25 @@ export async function anadirCostosReparacion(
       continue;
     }
 
-    const costo = await obtenerCosto(r.bsaleVariantId);
-    if (costo === null || costo <= 0) {
+    // `obtenerCosto` sólo devuelve `null` para un 404 real; otros fallos
+    // (Bsale caído, timeout) se capturan aquí y se cuentan aparte de
+    // `sinCosto`, para no confundir «no tiene costo» con «no se pudo saber».
+    try {
+      const costo = await obtenerCosto(r.bsaleVariantId);
+      if (costo === null || costo <= 0) {
+        delete r.costo;
+        sinCosto++;
+      } else {
+        r.costo = costo;
+        conCosto++;
+      }
+    } catch (error) {
       delete r.costo;
-      sinCosto++;
-    } else {
-      r.costo = costo;
-      conCosto++;
+      erroresCosto++;
+      logger.warn(
+        { bsaleVariantId: r.bsaleVariantId, err: (error as Error).message },
+        'No se pudo consultar el costo en Bsale; se deja sin reparar',
+      );
     }
   }
 
@@ -218,7 +232,7 @@ export async function anadirCostosReparacion(
   plan.resumen.total = plan.reparaciones.length;
   plan.resumen.costo = plan.reparaciones.filter((r) => r.costo !== undefined).length;
 
-  return { conCosto, sinCosto };
+  return { conCosto, sinCosto, erroresCosto };
 }
 
 /**
