@@ -38,7 +38,13 @@ import { parseEncryptionKey } from '../lib/crypto.js';
 import { logger } from '../lib/logger.js';
 import { PrismaConnectionStore, type PrismaLike } from '../db/prisma.store.js';
 import { PrismaCatalogStore, type PrismaCatalogLike } from '../db/catalog.store.js';
-import { PrismaSettingsStore, leerSyncAutoPrecios, type PrismaSettingsLike } from '../db/settings.store.js';
+import {
+  PrismaSettingsStore,
+  leerInterruptor,
+  CLAVE_SYNC_AUTO_PRECIOS,
+  CLAVE_SYNC_AUTO_STOCK,
+  type PrismaSettingsLike,
+} from '../db/settings.store.js';
 import { ConnectionService } from '../services/connection.service.js';
 import { leerCatalogo, type ItemCatalogo } from '../services/catalog.service.js';
 import { compararCatalogos } from '../services/matching.service.js';
@@ -69,12 +75,18 @@ async function main(): Promise<void> {
   });
   const catalogo = new PrismaCatalogStore(prisma as unknown as PrismaCatalogLike);
   const settings = new PrismaSettingsStore(prisma as unknown as PrismaSettingsLike);
-  // El botón del panel guarda aquí, no en el .env: este proceso es aparte del
-  // servidor HTTP (lo lanza el cron vía `docker exec`), así que sólo la base
-  // de datos compartida puede avisarle de un cambio hecho desde el panel.
-  // `env.SYNC_AUTO_PRECIOS` sigue siendo el valor por defecto si nadie tocó
-  // el botón todavía.
-  const syncAutoPrecios = await leerSyncAutoPrecios(settings, env.SYNC_AUTO_PRECIOS);
+  // Los botones del panel guardan aquí, no en el .env: este proceso es aparte
+  // del servidor HTTP (lo lanza el cron vía `docker exec`), así que sólo la
+  // base de datos compartida puede avisarle de un cambio hecho desde el
+  // panel. El de stock por defecto es `true` —hasta que existió el botón, el
+  // cron siempre lo aplicaba—; el de precios sigue usando
+  // `env.SYNC_AUTO_PRECIOS` como antes si nadie tocó el botón todavía.
+  const syncAutoStock = await leerInterruptor(settings, CLAVE_SYNC_AUTO_STOCK, true);
+  const syncAutoPrecios = await leerInterruptor(
+    settings,
+    CLAVE_SYNC_AUTO_PRECIOS,
+    env.SYNC_AUTO_PRECIOS,
+  );
 
   // ── 1. Leer Bsale ──────────────────────────────────────────────────────────
   const { items } = await service.usarBsale(env.BSALE_API_BASE_URL, (client) =>
@@ -137,28 +149,36 @@ async function main(): Promise<void> {
     conDiferencias: informe.conDiferencias,
   };
 
-  const planStock = planificar(informe.emparejados, 'STOCK');
-  if (planStock.cambios.length > 0) {
-    // Si hay cambios reales pero no se encontró sucursal, esto NO es «sin
-    // cambios»: es un fallo. Confundirlos dejaría el cron en verde mientras el
-    // stock se desincroniza sin que nadie se entere (ver routes/sync.ts, que sí
-    // distingue los dos casos).
-    if (!locationId) {
-      throw new Error(
-        'Hay cambios de stock pendientes pero no se encontró ninguna sucursal activa en Shopify.',
-      );
-    }
-    await service.usarShopify(
-      env.SHOPIFY_SHOP_DOMAIN,
-      env.SHOPIFY_API_VERSION,
-      env.SHOPIFY_CLIENT_ID,
-      async (client) => {
-        const r = await aplicarStock(client, planStock, locationId!);
-        resumen.stock = r;
-      },
-    );
+  // El stock se aplica solo si el botón del panel lo dejó activo (por
+  // defecto sí, para no cambiar el comportamiento de antes de que existiera
+  // este interruptor). Apagarlo sirve, por ejemplo, mientras se hace un
+  // conteo físico y no se quiere que el cron escriba encima a cada minuto.
+  if (!syncAutoStock) {
+    resumen.stock = { motivo: 'desactivado' };
   } else {
-    resumen.stock = { aplicados: 0, fallidos: 0, motivo: 'sin cambios' };
+    const planStock = planificar(informe.emparejados, 'STOCK');
+    if (planStock.cambios.length > 0) {
+      // Si hay cambios reales pero no se encontró sucursal, esto NO es «sin
+      // cambios»: es un fallo. Confundirlos dejaría el cron en verde mientras
+      // el stock se desincroniza sin que nadie se entere (ver routes/sync.ts,
+      // que sí distingue los dos casos).
+      if (!locationId) {
+        throw new Error(
+          'Hay cambios de stock pendientes pero no se encontró ninguna sucursal activa en Shopify.',
+        );
+      }
+      await service.usarShopify(
+        env.SHOPIFY_SHOP_DOMAIN,
+        env.SHOPIFY_API_VERSION,
+        env.SHOPIFY_CLIENT_ID,
+        async (client) => {
+          const r = await aplicarStock(client, planStock, locationId!);
+          resumen.stock = r;
+        },
+      );
+    } else {
+      resumen.stock = { aplicados: 0, fallidos: 0, motivo: 'sin cambios' };
+    }
   }
 
   // Los precios sólo si se ha pedido expresamente, desde el botón del panel

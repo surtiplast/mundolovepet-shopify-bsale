@@ -48,7 +48,12 @@ import {
 import type { ShopifyVariant } from '../integrations/shopify/client.js';
 import { IntegrationError } from '../lib/errors.js';
 import { logger } from '../lib/logger.js';
-import { leerSyncAutoPrecios, CLAVE_SYNC_AUTO_PRECIOS, type SettingsStore } from '../db/settings.store.js';
+import {
+  leerInterruptor,
+  CLAVE_SYNC_AUTO_PRECIOS,
+  CLAVE_SYNC_AUTO_STOCK,
+  type SettingsStore,
+} from '../db/settings.store.js';
 
 const syncLimiter = rateLimit({
   windowMs: 5 * 60_000,
@@ -116,33 +121,53 @@ export function syncRouter(
   const router = Router();
 
   /**
-   * El interruptor de precios automáticos.
+   * Los interruptores de stock y precios automáticos.
    *
-   * GET lo lee para pintar el botón con el estado real. POST lo cambia: lo
-   * guarda en base de datos, no en el `.env`, para que tenga efecto al
-   * instante y para que el cron —que corre aparte vía `docker exec` y no
-   * comparte memoria con este proceso— lea el mismo valor sin reiniciar nada.
+   * GET los lee para pintar los botones con el estado real. POST cambia el
+   * que se le pida: se guardan en base de datos, no en el `.env`, para que
+   * tengan efecto al instante y para que el cron —que corre aparte vía
+   * `docker exec` y no comparte memoria con este proceso— lea el mismo valor
+   * sin reiniciar nada.
+   *
+   * El de stock por defecto es `true`: hasta que existió este botón, el cron
+   * siempre lo aplicaba. El de precios por defecto es `env.SYNC_AUTO_PRECIOS`,
+   * que hasta ahora era la única forma de activarlo.
    */
   router.get('/sync/config', async (_req: Request, res: Response) => {
     try {
-      const syncAutoPrecios = await leerSyncAutoPrecios(settings, env.SYNC_AUTO_PRECIOS);
-      res.json({ ok: true, syncAutoPrecios });
+      const [syncAutoStock, syncAutoPrecios] = await Promise.all([
+        leerInterruptor(settings, CLAVE_SYNC_AUTO_STOCK, true),
+        leerInterruptor(settings, CLAVE_SYNC_AUTO_PRECIOS, env.SYNC_AUTO_PRECIOS),
+      ]);
+      res.json({ ok: true, syncAutoStock, syncAutoPrecios });
     } catch (error) {
       responderError(res, error, 'No se pudo leer la configuración.');
     }
   });
 
   router.post('/sync/config', async (req: Request, res: Response) => {
-    const { syncAutoPrecios } = req.body ?? {};
-    if (typeof syncAutoPrecios !== 'boolean') {
+    const { syncAutoStock, syncAutoPrecios } = req.body ?? {};
+    if (typeof syncAutoStock !== 'boolean' && typeof syncAutoPrecios !== 'boolean') {
       return res.status(400).json({
-        error: { message: 'Falta "syncAutoPrecios" (booleano) en el cuerpo de la petición.' },
+        error: {
+          message: 'Falta "syncAutoStock" o "syncAutoPrecios" (booleano) en el cuerpo de la petición.',
+        },
       });
     }
     try {
-      await settings.guardar(CLAVE_SYNC_AUTO_PRECIOS, String(syncAutoPrecios));
-      logger.info({ syncAutoPrecios }, 'Sincronización automática de precios reconfigurada');
-      res.json({ ok: true, syncAutoPrecios });
+      if (typeof syncAutoStock === 'boolean') {
+        await settings.guardar(CLAVE_SYNC_AUTO_STOCK, String(syncAutoStock));
+        logger.info({ syncAutoStock }, 'Sincronización automática de stock reconfigurada');
+      }
+      if (typeof syncAutoPrecios === 'boolean') {
+        await settings.guardar(CLAVE_SYNC_AUTO_PRECIOS, String(syncAutoPrecios));
+        logger.info({ syncAutoPrecios }, 'Sincronización automática de precios reconfigurada');
+      }
+      const actual = await Promise.all([
+        leerInterruptor(settings, CLAVE_SYNC_AUTO_STOCK, true),
+        leerInterruptor(settings, CLAVE_SYNC_AUTO_PRECIOS, env.SYNC_AUTO_PRECIOS),
+      ]);
+      res.json({ ok: true, syncAutoStock: actual[0], syncAutoPrecios: actual[1] });
     } catch (error) {
       responderError(res, error, 'No se pudo guardar la configuración.');
     }

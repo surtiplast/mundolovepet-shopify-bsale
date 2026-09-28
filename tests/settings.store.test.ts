@@ -9,25 +9,43 @@ import { describe, expect, it } from 'vitest';
 import {
   InMemorySettingsStore,
   PrismaSettingsStore,
-  leerSyncAutoPrecios,
+  leerInterruptor,
   CLAVE_SYNC_AUTO_PRECIOS,
+  CLAVE_SYNC_AUTO_STOCK,
   type PrismaSettingsLike,
 } from '../src/db/settings.store.js';
 
-describe('leerSyncAutoPrecios', () => {
+describe('leerInterruptor', () => {
   it('usa el valor por defecto si nunca se guardó nada', async () => {
     const store = new InMemorySettingsStore();
-    expect(await leerSyncAutoPrecios(store, true)).toBe(true);
-    expect(await leerSyncAutoPrecios(store, false)).toBe(false);
+    expect(await leerInterruptor(store, CLAVE_SYNC_AUTO_PRECIOS, true)).toBe(true);
+    expect(await leerInterruptor(store, CLAVE_SYNC_AUTO_PRECIOS, false)).toBe(false);
   });
 
   it('lo guardado gana sobre el valor por defecto', async () => {
     const store = new InMemorySettingsStore();
     await store.guardar(CLAVE_SYNC_AUTO_PRECIOS, 'true');
-    expect(await leerSyncAutoPrecios(store, false)).toBe(true);
+    expect(await leerInterruptor(store, CLAVE_SYNC_AUTO_PRECIOS, false)).toBe(true);
 
     await store.guardar(CLAVE_SYNC_AUTO_PRECIOS, 'false');
-    expect(await leerSyncAutoPrecios(store, true)).toBe(false);
+    expect(await leerInterruptor(store, CLAVE_SYNC_AUTO_PRECIOS, true)).toBe(false);
+  });
+
+  it('stock y precios son interruptores independientes, cada uno con su propio por defecto', async () => {
+    const store = new InMemorySettingsStore();
+    // Nadie tocó ninguno todavía: stock por defecto true, precios por defecto false.
+    expect(await leerInterruptor(store, CLAVE_SYNC_AUTO_STOCK, true)).toBe(true);
+    expect(await leerInterruptor(store, CLAVE_SYNC_AUTO_PRECIOS, false)).toBe(false);
+
+    // Apagar precios no debe tocar stock.
+    await store.guardar(CLAVE_SYNC_AUTO_PRECIOS, 'true');
+    expect(await leerInterruptor(store, CLAVE_SYNC_AUTO_STOCK, true)).toBe(true);
+    expect(await leerInterruptor(store, CLAVE_SYNC_AUTO_PRECIOS, false)).toBe(true);
+
+    // Y apagar stock no debe tocar precios.
+    await store.guardar(CLAVE_SYNC_AUTO_STOCK, 'false');
+    expect(await leerInterruptor(store, CLAVE_SYNC_AUTO_STOCK, true)).toBe(false);
+    expect(await leerInterruptor(store, CLAVE_SYNC_AUTO_PRECIOS, false)).toBe(true);
   });
 });
 
