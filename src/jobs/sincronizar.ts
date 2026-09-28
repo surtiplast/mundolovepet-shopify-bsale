@@ -38,6 +38,7 @@ import { parseEncryptionKey } from '../lib/crypto.js';
 import { logger } from '../lib/logger.js';
 import { PrismaConnectionStore, type PrismaLike } from '../db/prisma.store.js';
 import { PrismaCatalogStore, type PrismaCatalogLike } from '../db/catalog.store.js';
+import { PrismaSettingsStore, leerSyncAutoPrecios, type PrismaSettingsLike } from '../db/settings.store.js';
 import { ConnectionService } from '../services/connection.service.js';
 import { leerCatalogo, type ItemCatalogo } from '../services/catalog.service.js';
 import { compararCatalogos } from '../services/matching.service.js';
@@ -67,6 +68,13 @@ async function main(): Promise<void> {
     encryptionKey: parseEncryptionKey(env.ENCRYPTION_KEY),
   });
   const catalogo = new PrismaCatalogStore(prisma as unknown as PrismaCatalogLike);
+  const settings = new PrismaSettingsStore(prisma as unknown as PrismaSettingsLike);
+  // El botón del panel guarda aquí, no en el .env: este proceso es aparte del
+  // servidor HTTP (lo lanza el cron vía `docker exec`), así que sólo la base
+  // de datos compartida puede avisarle de un cambio hecho desde el panel.
+  // `env.SYNC_AUTO_PRECIOS` sigue siendo el valor por defecto si nadie tocó
+  // el botón todavía.
+  const syncAutoPrecios = await leerSyncAutoPrecios(settings, env.SYNC_AUTO_PRECIOS);
 
   // ── 1. Leer Bsale ──────────────────────────────────────────────────────────
   const { items } = await service.usarBsale(env.BSALE_API_BASE_URL, (client) =>
@@ -153,8 +161,9 @@ async function main(): Promise<void> {
     resumen.stock = { aplicados: 0, fallidos: 0, motivo: 'sin cambios' };
   }
 
-  // Los precios sólo si se ha pedido expresamente.
-  if (env.SYNC_AUTO_PRECIOS) {
+  // Los precios sólo si se ha pedido expresamente, desde el botón del panel
+  // o (si nunca se tocó) desde SYNC_AUTO_PRECIOS.
+  if (syncAutoPrecios) {
     const planPrecio = planificar(informe.emparejados, 'PRECIO');
     if (planPrecio.cambios.length > 0) {
       await service.usarShopify(
@@ -170,7 +179,7 @@ async function main(): Promise<void> {
       resumen.precios = { aplicados: 0, fallidos: 0, motivo: 'sin cambios' };
     }
   } else {
-    resumen.precios = { motivo: 'desactivado (SYNC_AUTO_PRECIOS)' };
+    resumen.precios = { motivo: 'desactivado' };
   }
 
   logger.info({ ...resumen, segundos: Math.round((Date.now() - inicio) / 1000) },

@@ -283,3 +283,16 @@ model AdminUser {
   lastLoginAt  DateTime?
   createdAt    DateTime  @default(now())
 }
+
+/// Interruptores del panel que hoy sólo vivían en variables de entorno.
+///
+/// La diferencia importa: una variable de entorno exige editar el .env y
+/// recrear el contenedor para cambiarla. Esto se guarda aquí para que un
+/// botón del panel la cambie al instante, y para que el cron —que corre
+/// como un proceso aparte vía `docker exec`— la lea igual que el panel, sin
+/// depender de qué .env tenía el contenedor en el momento de arrancar.
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}

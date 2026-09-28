@@ -48,6 +48,7 @@ import {
 import type { ShopifyVariant } from '../integrations/shopify/client.js';
 import { IntegrationError } from '../lib/errors.js';
 import { logger } from '../lib/logger.js';
+import { leerSyncAutoPrecios, CLAVE_SYNC_AUTO_PRECIOS, type SettingsStore } from '../db/settings.store.js';
 
 const syncLimiter = rateLimit({
   windowMs: 5 * 60_000,
@@ -106,8 +107,46 @@ function camposDe(req: Request): CamposReparacion {
   return TODOS_LOS_CAMPOS;
 }
 
-export function syncRouter(service: ConnectionService, store: CatalogStore, env: Env): Router {
+export function syncRouter(
+  service: ConnectionService,
+  store: CatalogStore,
+  env: Env,
+  settings: SettingsStore,
+): Router {
   const router = Router();
+
+  /**
+   * El interruptor de precios automáticos.
+   *
+   * GET lo lee para pintar el botón con el estado real. POST lo cambia: lo
+   * guarda en base de datos, no en el `.env`, para que tenga efecto al
+   * instante y para que el cron —que corre aparte vía `docker exec` y no
+   * comparte memoria con este proceso— lea el mismo valor sin reiniciar nada.
+   */
+  router.get('/sync/config', async (_req: Request, res: Response) => {
+    try {
+      const syncAutoPrecios = await leerSyncAutoPrecios(settings, env.SYNC_AUTO_PRECIOS);
+      res.json({ ok: true, syncAutoPrecios });
+    } catch (error) {
+      responderError(res, error, 'No se pudo leer la configuración.');
+    }
+  });
+
+  router.post('/sync/config', async (req: Request, res: Response) => {
+    const { syncAutoPrecios } = req.body ?? {};
+    if (typeof syncAutoPrecios !== 'boolean') {
+      return res.status(400).json({
+        error: { message: 'Falta "syncAutoPrecios" (booleano) en el cuerpo de la petición.' },
+      });
+    }
+    try {
+      await settings.guardar(CLAVE_SYNC_AUTO_PRECIOS, String(syncAutoPrecios));
+      logger.info({ syncAutoPrecios }, 'Sincronización automática de precios reconfigurada');
+      res.json({ ok: true, syncAutoPrecios });
+    } catch (error) {
+      responderError(res, error, 'No se pudo guardar la configuración.');
+    }
+  });
 
   /**
    * Vuelve a leer Shopify y calcula el plan.

@@ -288,6 +288,10 @@
       <button id="btnSimPrecio">Simular precios</button>
       <button id="btnAplicarPrecio" class="peligro">Actualizar precios en Shopify</button>
     </div>
+    <div class="actions" style="margin:0 0 20px">
+      <span id="precioAutoChip" class="cat-chip">Precios automáticos: cargando…</span>
+      <button id="btnTogglePrecioAuto" disabled>Cambiar</button>
+    </div>
   </div>
 
   <div class="panel-tab" data-panel="productos" hidden>
@@ -932,6 +936,60 @@ async function sincronizar(tipo, aplicar, boton) {
 $('btnSimStock').onclick = (e) => sincronizar('STOCK', false, e.target);
 $('btnSimPrecio').onclick = (e) => sincronizar('PRECIO', false, e.target);
 
+/* Interruptor de precios automáticos.
+   Se guarda en base de datos, no en el .env: el cron (que corre aparte, vía
+   `docker exec`, sin memoria compartida con este servidor) lee la misma
+   fuente, así que el cambio tiene efecto en la siguiente corrida, sin
+   reiniciar nada. */
+function pintarPrecioAuto(activo) {
+  const chip = $('precioAutoChip');
+  chip.textContent = `Precios automáticos: ${activo ? 'Activados' : 'Desactivados'}`;
+  chip.className = 'cat-chip';
+  const boton = $('btnTogglePrecioAuto');
+  boton.textContent = activo ? 'Desactivar' : 'Activar';
+  boton.disabled = false;
+}
+
+async function cargarConfigSync() {
+  try {
+    const res = await pedir('/api/sync/config');
+    const data = await res.json();
+    if (res.ok) pintarPrecioAuto(data.syncAutoPrecios);
+    else $('precioAutoChip').textContent = 'Precios automáticos: no se pudo leer';
+  } catch {
+    $('precioAutoChip').textContent = 'Precios automáticos: no se pudo leer';
+  }
+}
+
+$('btnTogglePrecioAuto').onclick = async (e) => {
+  const boton = e.target;
+  const activarA = boton.textContent === 'Activar';
+  boton.disabled = true;
+  boton.textContent = 'Guardando…';
+  try {
+    const res = await pedir('/api/sync/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ syncAutoPrecios: activarA }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      banner('err', data.error?.message || 'No se pudo cambiar la configuración.');
+      boton.disabled = false;
+      boton.textContent = activarA ? 'Activar' : 'Desactivar';
+      return;
+    }
+    pintarPrecioAuto(data.syncAutoPrecios);
+    banner('ok', data.syncAutoPrecios
+      ? 'Sincronización automática de precios ACTIVADA: el cron los aplicará solo de ahora en adelante.'
+      : 'Sincronización automática de precios DESACTIVADA: los precios sólo cambiarán cuando los apliques a mano.');
+  } catch {
+    banner('err', 'Error de red al cambiar la configuración.');
+    boton.disabled = false;
+    boton.textContent = activarA ? 'Activar' : 'Desactivar';
+  }
+};
+
 /* Aplicar pide confirmación con el número real de cambios: se simula primero
    y se pregunta con ese dato delante, no con un «¿seguro?» genérico. */
 async function confirmarYAplicar(tipo, boton) {
@@ -1528,6 +1586,7 @@ window.addEventListener('popstate', () => mostrarPestana(pestanaDeLaRuta()));
 mostrarPestana(pestanaDeLaRuta());
 
 refresh();
+cargarConfigSync();
 </script>
 </body>
 </html>

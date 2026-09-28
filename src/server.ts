@@ -40,6 +40,12 @@ import {
   type InvoiceStore,
   type PrismaInvoiceLike,
 } from './db/invoice.store.js';
+import {
+  InMemorySettingsStore,
+  PrismaSettingsStore,
+  type SettingsStore,
+  type PrismaSettingsLike,
+} from './db/settings.store.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -49,6 +55,7 @@ async function resolveStore(
   store: ConnectionStore;
   catalog: CatalogStore;
   invoices: InvoiceStore;
+  settings: SettingsStore;
   kind: string;
 }> {
   try {
@@ -63,6 +70,7 @@ async function resolveStore(
       store: new PrismaConnectionStore(prisma),
       catalog: new PrismaCatalogStore(prisma as unknown as PrismaCatalogLike),
       invoices: new PrismaInvoiceStore(prisma as unknown as PrismaInvoiceLike),
+      settings: new PrismaSettingsStore(prisma as unknown as PrismaSettingsLike),
       kind: 'postgresql',
     };
   } catch (error) {
@@ -74,6 +82,7 @@ async function resolveStore(
       store: new InMemoryConnectionStore(),
       catalog: new InMemoryCatalogStore(),
       invoices: new InMemoryInvoiceStore(),
+      settings: new InMemorySettingsStore(),
       kind: 'memoria (volátil)',
     };
   }
@@ -85,6 +94,7 @@ export async function createApp(
   storeKind: string,
   catalog: CatalogStore = new InMemoryCatalogStore(),
   invoices: InvoiceStore = new InMemoryInvoiceStore(),
+  settings: SettingsStore = new InMemorySettingsStore(),
 ) {
   const encryptionKey = parseEncryptionKey(env.ENCRYPTION_KEY);
   const service = new ConnectionService({ store, encryptionKey });
@@ -185,7 +195,7 @@ export async function createApp(
 
   app.use('/api', connectionsRouter(service, env));
   app.use('/api', catalogRouter(service, catalog, env));
-  app.use('/api', syncRouter(service, catalog, env));
+  app.use('/api', syncRouter(service, catalog, env, settings));
   app.use('/api', invoicesRouter(service, env, invoices));
 
   // ── El panel ──────────────────────────────────────────────────────────────
@@ -246,8 +256,8 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const { store, catalog, invoices, kind } = await resolveStore(env);
-  const { app } = await createApp(env, store, kind, catalog, invoices);
+  const { store, catalog, invoices, settings, kind } = await resolveStore(env);
+  const { app } = await createApp(env, store, kind, catalog, invoices, settings);
 
   app.listen(env.PORT, () => {
     logger.info(
