@@ -6,6 +6,7 @@
 <!-- El título vive aquí y en `ui-title-bar`. Dentro de Shopify manda el
      segundo; fuera, éste es lo único que identifica la pestaña. -->
 <title>Mundo Love Pet — Shopify × Bsale</title>
+<link rel="icon" href="/logo.png">
 
 <!-- ── App Bridge ──────────────────────────────────────────────────────────
      Hace que la app funcione dentro de Aplicaciones en el admin de Shopify.
@@ -31,7 +32,12 @@
 <style>
   :root{
     --bg:#0f1115; --panel:#171a21; --panel-2:#1e222b; --line:#2a2f3a;
-    --txt:#e8eaf0; --muted:#9aa3b2; --brand:#6d5efc; --brand-2:#8b7dff;
+    --txt:#e8eaf0; --muted:#9aa3b2;
+    /* Teal y naranja del logo de Mundo Love Pet (muestreados del propio
+       archivo): --brand un punto más oscuro que el teal real para que el
+       texto blanco de los botones tenga contraste de sobra; --brand-2 es el
+       teal tal cual sale en el logo, para hover y enlaces. */
+    --brand:#3d7373; --brand-2:#519393; --brand-acento:#eeaf39;
     --ok:#22c55e; --warn:#f59e0b; --err:#ef4444; --info:#38bdf8;
   }
   /* El fondo era #f5f6fa, un gris azulado muy claro. Sobre él, las tarjetas y
@@ -61,6 +67,10 @@
      obligaba a desplazarse en horizontal para leer precio y stock a la vez,
      que es justo la comparación para la que existe la tabla. */
   .wrap{max-width:1720px;margin:0 auto;padding:12px 24px 40px}
+  @media (max-width:480px){
+    .wrap{padding:10px 12px 28px}
+    .marca span{font-size:14px}
+  }
 
   /* ── Dos columnas: acciones a un lado, datos al otro ──────────────────────
      Los botones ocupaban una franja horizontal encima de la tabla y empujaban
@@ -202,12 +212,27 @@
   .cat-tag{display:inline-block;border-radius:999px;padding:2px 9px;font-size:11.5px;margin-right:5px;
             border:1px solid color-mix(in srgb,var(--err) 45%,var(--line));color:var(--err)}
   .cat-tag.ok{border-color:color-mix(in srgb,var(--ok) 45%,var(--line));color:var(--ok)}
+
+  /* ── Marca ────────────────────────────────────────────────────────────────
+     Sólo se ve fuera del admin de Shopify: ahí adentro ya está el nombre de
+     la app en la cabecera nativa (`ui-title-bar`, más abajo), y repetir el
+     logo encima sería lo mismo dos veces. `enElAdminDeShopify()` la oculta
+     junto con las pestañas. */
+  .marca{display:flex;align-items:center;gap:10px;margin:2px 0 18px}
+  .marca img{width:30px;height:30px;border-radius:8px}
+  .marca span{font-size:15px;font-weight:600;color:var(--txt)}
+  .marca small{color:var(--muted);font-weight:400}
 </style>
 </head>
 <body>
 <div class="wrap">
 
   <div id="banner"></div>
+
+  <div class="marca" id="marca">
+    <img src="/logo.png" alt="" width="30" height="30">
+    <span>Mundo Love Pet <small>· Shopify × Bsale</small></span>
+  </div>
 
   <!-- ── Cabecera de Shopify ──────────────────────────────────────────────────
        `ui-title-bar` escribe en la cabecera del admin, arriba del todo: el
@@ -1568,7 +1593,20 @@ const enElAdminDeShopify = () => {
   try { return window.top !== window.self; } catch { return true; }
 };
 
-if (enElAdminDeShopify()) $('tabs').hidden = true;
+if (enElAdminDeShopify()) {
+  $('tabs').hidden = true;
+  $('marca').hidden = true;
+} else {
+  // Fuera de Shopify, `ui-title-bar` y `ui-nav-menu` no son nada que el
+  // navegador reconozca: sin App Bridge para reubicar su contenido en la
+  // cabecera y el menú reales, se quedan sueltos en la página tal cual,
+  // sin estilo — el botón «Fase 6» y los enlaces de las pestañas repetidos
+  // justo encima de las pestañas de verdad. Dentro de Shopify se dejan
+  // intactas: App Bridge las necesita visibles para relocalizar su
+  // contenido a la cabecera y el menú nativos.
+  document.querySelector('ui-title-bar')?.setAttribute('hidden', '');
+  document.querySelector('ui-nav-menu')?.setAttribute('hidden', '');
+}
 
 for (const tab of document.querySelectorAll('.tab')) {
   tab.onclick = () => {
