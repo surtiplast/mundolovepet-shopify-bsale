@@ -13,6 +13,7 @@
 import express from 'express';
 import helmet from 'helmet';
 import pinoHttp from 'pino-http';
+import pino from 'pino';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -26,6 +27,7 @@ import { connectionsRouter } from './routes/connections.js';
 import { catalogRouter } from './routes/catalog.js';
 import { syncRouter } from './routes/sync.js';
 import { invoicesRouter } from './routes/invoices.js';
+import { webhooksRouter } from './routes/webhooks.js';
 import { requiereClave } from './lib/auth.js';
 import { readFile } from 'node:fs/promises';
 import {
@@ -46,6 +48,12 @@ import {
   type SettingsStore,
   type PrismaSettingsLike,
 } from './db/settings.store.js';
+import {
+  InMemoryWebhookStore,
+  PrismaWebhookStore,
+  type WebhookStore,
+  type PrismaWebhookLike,
+} from './db/webhook.store.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -56,6 +64,7 @@ async function resolveStore(
   catalog: CatalogStore;
   invoices: InvoiceStore;
   settings: SettingsStore;
+  webhooks: WebhookStore;
   kind: string;
 }> {
   try {
@@ -71,6 +80,7 @@ async function resolveStore(
       catalog: new PrismaCatalogStore(prisma as unknown as PrismaCatalogLike),
       invoices: new PrismaInvoiceStore(prisma as unknown as PrismaInvoiceLike),
       settings: new PrismaSettingsStore(prisma as unknown as PrismaSettingsLike),
+      webhooks: new PrismaWebhookStore(prisma as unknown as PrismaWebhookLike),
       kind: 'postgresql',
     };
   } catch (error) {
@@ -83,6 +93,7 @@ async function resolveStore(
       catalog: new InMemoryCatalogStore(),
       invoices: new InMemoryInvoiceStore(),
       settings: new InMemorySettingsStore(),
+      webhooks: new InMemoryWebhookStore(),
       kind: 'memoria (volátil)',
     };
   }
@@ -95,6 +106,7 @@ export async function createApp(
   catalog: CatalogStore = new InMemoryCatalogStore(),
   invoices: InvoiceStore = new InMemoryInvoiceStore(),
   settings: SettingsStore = new InMemorySettingsStore(),
+  webhooks: WebhookStore = new InMemoryWebhookStore(),
 ) {
   const encryptionKey = parseEncryptionKey(env.ENCRYPTION_KEY);
   const service = new ConnectionService({ store, encryptionKey });
@@ -152,8 +164,31 @@ export async function createApp(
     }),
   );
 
-  app.use(pinoHttp({ logger, autoLogging: { ignore: (req) => req.url === '/api/health' } }));
+  app.use(
+    pinoHttp({
+      logger,
+      autoLogging: { ignore: (req) => req.url === '/api/health' },
+      // El segmento secreto del webhook de Bsale va en la URL, no en una
+      // cabecera (ver routes/webhooks.ts): sin esto, pino-http lo escribiría
+      // en texto plano en `req.url` de cada línea del log, y el `redact()`
+      // de mask.ts no lo vería — censura por nombre de campo, no mira dentro
+      // del valor de una URL.
+      serializers: {
+        req(req) {
+          const base = pino.stdSerializers.req(req);
+          base.url = base.url.replace(/^\/webhooks\/bsale\/[^/?]+/, '/webhooks/bsale/[REDACTADO]');
+          return base;
+        },
+      },
+    }),
+  );
   app.use(express.json({ limit: '1mb' }));
+
+  // ── Webhooks ─────────────────────────────────────────────────────────────
+  // Va ANTES del candado a propósito: Bsale no manda usuario ni contraseña,
+  // sólo el segmento secreto en la propia URL. El candado del panel es para
+  // gente; esto es para servidores.
+  app.use(webhooksRouter(env, webhooks));
 
   // ── El candado ────────────────────────────────────────────────────────────
   // Va ANTES de las rutas y de los ficheros estáticos: protege la API y el
@@ -260,8 +295,8 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const { store, catalog, invoices, settings, kind } = await resolveStore(env);
-  const { app } = await createApp(env, store, kind, catalog, invoices, settings);
+  const { store, catalog, invoices, settings, webhooks, kind } = await resolveStore(env);
+  const { app } = await createApp(env, store, kind, catalog, invoices, settings, webhooks);
 
   app.listen(env.PORT, () => {
     logger.info(
