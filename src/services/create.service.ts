@@ -55,6 +55,8 @@ export interface ResultadoCreacion {
   fallidos: number;
   errores: Array<{ sku: string; mensaje: string }>;
   ids: string[];
+  /** Los candidatos que de verdad se crearon, para el registro de cambios. */
+  candidatosCreados: CandidatoCreacion[];
 }
 
 /**
@@ -243,7 +245,7 @@ export async function crearProductos(
   plan: PlanCreacion,
   locationId: string,
 ): Promise<ResultadoCreacion> {
-  const resultado: ResultadoCreacion = { creados: 0, fallidos: 0, errores: [], ids: [] };
+  const resultado: ResultadoCreacion = { creados: 0, fallidos: 0, errores: [], ids: [], candidatosCreados: [] };
 
   for (const c of plan.candidatos) {
     const producto: ProductoNuevo = {
@@ -262,6 +264,7 @@ export async function crearProductos(
       if (r.ok) {
         resultado.creados++;
         if (r.productId) resultado.ids.push(r.productId);
+        resultado.candidatosCreados.push(c);
       } else {
         resultado.fallidos++;
         resultado.errores.push({ sku: c.sku, mensaje: r.errores.join(' | ') });

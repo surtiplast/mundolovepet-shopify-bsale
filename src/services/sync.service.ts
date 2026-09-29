@@ -63,6 +63,8 @@ export interface ResultadoAplicacion {
   aplicados: number;
   fallidos: number;
   errores: Array<{ codigo: string; mensaje: string }>;
+  /** Los cambios que de verdad se escribieron, para el registro de cambios. */
+  cambiosAplicados: CambioPlanificado[];
 }
 
 /**
@@ -165,7 +167,7 @@ export async function aplicarStock(
     throw new Error('aplicarStock recibió un plan que no es de stock.');
   }
 
-  const resultado: ResultadoAplicacion = { aplicados: 0, fallidos: 0, errores: [] };
+  const resultado: ResultadoAplicacion = { aplicados: 0, fallidos: 0, errores: [], cambiosAplicados: [] };
 
   // Por lotes: una sola llamada con miles de artículos supera el coste máximo
   // de consulta de Shopify y la rechaza entera.
@@ -186,6 +188,7 @@ export async function aplicarStock(
       const r: ResultadoEscritura = await client.fijarInventario(cambios);
       if (r.ok) {
         resultado.aplicados += lote.length;
+        resultado.cambiosAplicados.push(...lote);
       } else {
         resultado.fallidos += lote.length;
         // El error es del lote entero: se anota una vez con su alcance, no una
@@ -222,7 +225,7 @@ export async function aplicarPrecios(
     throw new Error('aplicarPrecios recibió un plan que no es de precios.');
   }
 
-  const resultado: ResultadoAplicacion = { aplicados: 0, fallidos: 0, errores: [] };
+  const resultado: ResultadoAplicacion = { aplicados: 0, fallidos: 0, errores: [], cambiosAplicados: [] };
 
   const porProducto = new Map<string, CambioPlanificado[]>();
   for (const c of plan.cambios) {
@@ -249,6 +252,7 @@ export async function aplicarPrecios(
       );
       if (r.ok) {
         resultado.aplicados += cambios.length;
+        resultado.cambiosAplicados.push(...cambios);
       } else {
         resultado.fallidos += cambios.length;
         resultado.errores.push({ codigo: cambios[0]!.codigo, mensaje: r.errores.join(' | ') });

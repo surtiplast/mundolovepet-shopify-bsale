@@ -56,6 +56,8 @@ import {
   CLAVE_CREAR_AUTO_PRODUCTOS,
   type SettingsStore,
 } from '../db/settings.store.js';
+import type { SyncLogStore } from '../db/synclog.store.js';
+import { registrosDeSync, registrosDeReparacion, registrosDeCreacion } from '../services/changelog.service.js';
 
 const syncLimiter = rateLimit({
   windowMs: 5 * 60_000,
@@ -119,8 +121,24 @@ export function syncRouter(
   store: CatalogStore,
   env: Env,
   settings: SettingsStore,
+  logs: SyncLogStore,
 ): Router {
   const router = Router();
+
+  /**
+   * Guarda el registro de cambios. Va después de responder al panel y en su
+   * propio try: la escritura en Shopify ya ocurrió, así que un fallo al
+   * guardar el registro no debe convertirse en un error para quien pulsó el
+   * botón. El cambio existe; lo que faltaría es el apunte.
+   */
+  async function registrarCambios(entradas: ReturnType<typeof registrosDeSync>): Promise<void> {
+    if (entradas.length === 0) return;
+    try {
+      await logs.registrar(entradas);
+    } catch (error) {
+      logger.error({ err: (error as Error).message }, 'No se pudo guardar el registro de cambios');
+    }
+  }
 
   /**
    * Los interruptores de stock, precios, costo y alta de productos
@@ -298,11 +316,17 @@ export function syncRouter(
         const { plan, locationId, productoPorVariante } = await calcularPlan(tipo, limite);
 
         if (plan.cambios.length === 0) {
-          res.json({ ok: true, simulacion: false, tipo, resultado: { aplicados: 0, fallidos: 0, errores: [] }, resumen: plan.resumen });
+          res.json({
+            ok: true,
+            simulacion: false,
+            tipo,
+            resultado: { aplicados: 0, fallidos: 0, errores: [], cambiosAplicados: [] },
+            resumen: plan.resumen,
+          });
           return;
         }
 
-        let resultado: ResultadoAplicacion = { aplicados: 0, fallidos: 0, errores: [] };
+        let resultado: ResultadoAplicacion = { aplicados: 0, fallidos: 0, errores: [], cambiosAplicados: [] };
         if (tipo === 'STOCK') {
           if (!locationId) {
             throw new IntegrationError('No se encontró ninguna sucursal activa en Shopify.', {
@@ -332,6 +356,8 @@ export function syncRouter(
         logger.info({ tipo, ...resultado, planificados: plan.cambios.length }, 'Sincronización aplicada');
 
         res.json({ ok: true, simulacion: false, tipo, resultado, resumen: plan.resumen });
+
+        await registrarCambios(registrosDeSync(resultado.cambiosAplicados, tipo, 'MANUAL'));
       });
     } catch (error) {
       responderError(res, error, 'No se pudo aplicar la sincronización.');
@@ -425,7 +451,7 @@ export function syncRouter(
           anadirCostos(plan, (variantId) => bsale.obtenerCosto(variantId)),
         );
 
-        let resultado: ResultadoCreacion = { creados: 0, fallidos: 0, errores: [], ids: [] };
+        let resultado: ResultadoCreacion = { creados: 0, fallidos: 0, errores: [], ids: [], candidatosCreados: [] };
         await service.usarShopify(
           env.SHOPIFY_SHOP_DOMAIN,
           env.SHOPIFY_API_VERSION,
@@ -441,6 +467,8 @@ export function syncRouter(
         );
 
         res.json({ ok: true, simulacion: false, resumen: plan.resumen, resultado, costos });
+
+        await registrarCambios(registrosDeCreacion(resultado.candidatosCreados, 'MANUAL'));
       });
     } catch (error) {
       responderError(res, error, 'No se pudieron crear los productos.');
@@ -504,7 +532,7 @@ export function syncRouter(
       }
 
       await conCandado('sync/reparar', async () => {
-        let resultado: ResultadoReparacion = { reparados: 0, fallidos: 0, errores: [] };
+        let resultado: ResultadoReparacion = { reparados: 0, fallidos: 0, errores: [], reparacionesAplicadas: [] };
         await service.usarShopify(
           env.SHOPIFY_SHOP_DOMAIN,
           env.SHOPIFY_API_VERSION,
@@ -517,6 +545,8 @@ export function syncRouter(
         logger.info({ campos, ...resultado, ...plan.resumen }, 'Productos reparados');
 
         res.json({ ok: true, simulacion: false, campos, resumen: plan.resumen, costos, resultado });
+
+        await registrarCambios(registrosDeReparacion(resultado.reparacionesAplicadas, 'MANUAL'));
       });
     } catch (error) {
       responderError(res, error, 'No se pudieron reparar los productos.');

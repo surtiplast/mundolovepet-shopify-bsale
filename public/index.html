@@ -214,6 +214,8 @@
   .cat-filtros{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
   .cat-filtros input[type=search]{flex:1;min-width:220px;background:var(--panel-2);color:var(--txt);
             border:1px solid var(--line);border-radius:9px;padding:9px 12px;font-size:13px}
+  .cat-filtros select{background:var(--panel-2);color:var(--txt);border:1px solid var(--line);
+            border-radius:9px;padding:9px 12px;font-size:13px;font-family:inherit}
   .cat-check{display:flex;gap:7px;align-items:center;font-size:12.5px;color:var(--muted);cursor:pointer}
   .cat-conteo{font-size:12.5px;color:var(--muted);margin-left:auto}
 
@@ -299,6 +301,7 @@
     <button class="tab" role="tab" data-tab="sincronizar" aria-selected="false">Sincronizar</button>
     <button class="tab" role="tab" data-tab="productos" aria-selected="false">Productos nuevos</button>
     <button class="tab" role="tab" data-tab="comprobantes" aria-selected="false">Comprobantes</button>
+    <button class="tab" role="tab" data-tab="cambios" aria-selected="false">Cambios</button>
   </nav>
 
   <!-- Las acciones a la izquierda y los datos a la derecha. Los `.panel-tab`
@@ -376,6 +379,18 @@
     </div>
   </div>
 
+  <div class="panel-tab" data-panel="cambios" hidden>
+    <p class="tab-nota">Cada precio, stock, costo o código de barras que se
+      actualizó solo o a mano, con su valor anterior y el nuevo.</p>
+    <div class="actions" style="margin:0 0 20px">
+      <button class="primary" data-rango="hoy">Hoy</button>
+      <button data-rango="semana">Esta semana</button>
+      <button data-rango="mes">Este mes</button>
+      <button data-rango="anio">Este año</button>
+      <button data-rango="todo">Todo</button>
+    </div>
+  </div>
+
   </aside>
 
   <div class="columna-datos">
@@ -426,6 +441,31 @@
           </tr>
         </thead>
         <tbody id="pedCuerpo"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="cambios" data-tabs="cambios" hidden>
+    <h2 class="cat-titulo">Registro de cambios</h2>
+    <div id="cambiosResumen" class="cat-resumen"></div>
+    <div class="cat-filtros">
+      <select id="cambiosAccion">
+        <option value="">Todas las acciones</option>
+        <option value="STOCK">Stock</option>
+        <option value="PRECIO">Precio</option>
+        <option value="COSTO">Costo</option>
+        <option value="CODIGO_BARRAS">Código de barras</option>
+        <option value="PRODUCTO_CREADO">Producto creado</option>
+      </select>
+      <input id="cambiosSku" type="search" placeholder="Buscar por SKU exacto…" autocomplete="off">
+      <span id="cambiosConteo" class="cat-conteo"></span>
+    </div>
+    <div class="cat-tabla-scroll">
+      <table class="cat-tabla">
+        <thead>
+          <tr><th>Fecha</th><th>Acción</th><th>SKU</th><th>Cambio</th><th>Origen</th></tr>
+        </thead>
+        <tbody id="cambiosCuerpo"></tbody>
       </table>
     </div>
   </section>
@@ -1580,6 +1620,94 @@ async function anularComprobante(id, nombre, boton) {
 
 $('btnPedidos').onclick = (e) => verPedidos(e.target);
 
+/* ── Registro de cambios ─────────────────────────────────────────────────────
+   Sólo lee: cada fila viene de `SyncLog`, escrita por las rutas y el cron al
+   terminar de escribir de verdad (ver changelog.service.ts). No hay «simular»
+   aquí porque no hay nada que aplicar — es sólo el historial. */
+const ETIQUETAS_ACCION = {
+  STOCK: 'Stock',
+  PRECIO: 'Precio',
+  COSTO: 'Costo',
+  CODIGO_BARRAS: 'Código de barras',
+  PRODUCTO_CREADO: 'Producto creado',
+};
+
+let rangoCambios = 'hoy';
+
+/** `hasta` siempre es ahora. `desde` según el botón activo; `todo` no filtra. */
+function fechasDelRango(rango) {
+  const ahora = new Date();
+  if (rango === 'todo') return { desde: null, hasta: null };
+
+  const desde = new Date(ahora);
+  desde.setHours(0, 0, 0, 0);
+  if (rango === 'semana') {
+    // Lunes de esta semana: getDay() da 0 para domingo.
+    const diaISO = (desde.getDay() + 6) % 7;
+    desde.setDate(desde.getDate() - diaISO);
+  } else if (rango === 'mes') {
+    desde.setDate(1);
+  } else if (rango === 'anio') {
+    desde.setMonth(0, 1);
+  }
+  return { desde, hasta: ahora };
+}
+
+function pintarBotonesRango() {
+  for (const b of document.querySelectorAll('[data-rango]')) {
+    b.className = b.dataset.rango === rangoCambios ? 'primary' : '';
+  }
+}
+
+async function cargarCambios() {
+  pintarBotonesRango();
+  const { desde, hasta } = fechasDelRango(rangoCambios);
+  const params = new URLSearchParams({ limite: '200' });
+  if (desde) params.set('desde', desde.toISOString());
+  if (hasta) params.set('hasta', hasta.toISOString());
+  const accion = $('cambiosAccion').value;
+  if (accion) params.set('accion', accion);
+  const sku = $('cambiosSku').value.trim();
+  if (sku) params.set('sku', sku);
+
+  try {
+    const res = await pedir(`/api/logs?${params}`);
+    const data = await res.json();
+    if (!res.ok) {
+      $('cambiosCuerpo').innerHTML = `<tr><td colspan="5" class="vacio">${escapeHtml(data.error?.message || 'No se pudo leer el registro.')}</td></tr>`;
+      return;
+    }
+
+    $('cambiosResumen').innerHTML =
+      `<span class="cat-chip"><b>${data.total}</b> cambios en el rango</span>`;
+    $('cambiosConteo').textContent = data.total > data.items.length
+      ? `Mostrando los ${data.items.length} más recientes de ${data.total}`
+      : `${data.items.length} cambios`;
+
+    $('cambiosCuerpo').innerHTML = data.items.length === 0
+      ? `<tr><td colspan="5" class="vacio">Sin cambios en este rango.</td></tr>`
+      : data.items.map((it) => `
+        <tr>
+          <td><small>${new Date(it.occurredAt).toLocaleString('es-PE')}</small></td>
+          <td><span class="cat-chip">${escapeHtml(ETIQUETAS_ACCION[it.action] || it.action)}</span></td>
+          <td class="sku">${escapeHtml(it.sku || '—')}</td>
+          <td>${escapeHtml(it.message)}</td>
+          <td><small>${it.context?.origen === 'CRON' ? 'Automático' : 'Manual'}</small></td>
+        </tr>`).join('');
+  } catch {
+    banner('err', 'Error de red al leer el registro de cambios.');
+  }
+}
+
+for (const b of document.querySelectorAll('[data-rango]')) {
+  b.onclick = () => {
+    rangoCambios = b.dataset.rango;
+    cargarCambios();
+  };
+}
+$('cambiosAccion').onchange = cargarCambios;
+$('cambiosSku').addEventListener('change', cargarCambios);
+
 /* ── Duplicados ──────────────────────────────────────────────────────────────
    Sólo lee. Las variantes de cada grupo van ordenadas de más a menos
    sospechosa, así que la primera de cada bloque es la candidata a borrar. */
@@ -1691,6 +1819,7 @@ const RUTAS = {
   '/sincronizar': 'sincronizar',
   '/productos': 'productos',
   '/comprobantes': 'comprobantes',
+  '/cambios': 'cambios',
 };
 
 function pestanaDeLaRuta() {
@@ -1756,6 +1885,7 @@ mostrarPestana(pestanaDeLaRuta());
 refresh();
 probarConexiones(true);
 cargarConfigSync();
+cargarCambios();
 </script>
 </body>
 </html>

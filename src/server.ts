@@ -28,6 +28,7 @@ import { catalogRouter } from './routes/catalog.js';
 import { syncRouter } from './routes/sync.js';
 import { invoicesRouter } from './routes/invoices.js';
 import { webhooksRouter } from './routes/webhooks.js';
+import { logsRouter } from './routes/logs.js';
 import { requiereClave } from './lib/auth.js';
 import { readFile } from 'node:fs/promises';
 import {
@@ -54,6 +55,12 @@ import {
   type WebhookStore,
   type PrismaWebhookLike,
 } from './db/webhook.store.js';
+import {
+  InMemorySyncLogStore,
+  PrismaSyncLogStore,
+  type SyncLogStore,
+  type PrismaSyncLogLike,
+} from './db/synclog.store.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -65,6 +72,7 @@ async function resolveStore(
   invoices: InvoiceStore;
   settings: SettingsStore;
   webhooks: WebhookStore;
+  logs: SyncLogStore;
   kind: string;
 }> {
   try {
@@ -81,6 +89,7 @@ async function resolveStore(
       invoices: new PrismaInvoiceStore(prisma as unknown as PrismaInvoiceLike),
       settings: new PrismaSettingsStore(prisma as unknown as PrismaSettingsLike),
       webhooks: new PrismaWebhookStore(prisma as unknown as PrismaWebhookLike),
+      logs: new PrismaSyncLogStore(prisma as unknown as PrismaSyncLogLike),
       kind: 'postgresql',
     };
   } catch (error) {
@@ -94,6 +103,7 @@ async function resolveStore(
       invoices: new InMemoryInvoiceStore(),
       settings: new InMemorySettingsStore(),
       webhooks: new InMemoryWebhookStore(),
+      logs: new InMemorySyncLogStore(),
       kind: 'memoria (volátil)',
     };
   }
@@ -107,6 +117,7 @@ export async function createApp(
   invoices: InvoiceStore = new InMemoryInvoiceStore(),
   settings: SettingsStore = new InMemorySettingsStore(),
   webhooks: WebhookStore = new InMemoryWebhookStore(),
+  logs: SyncLogStore = new InMemorySyncLogStore(),
 ) {
   const encryptionKey = parseEncryptionKey(env.ENCRYPTION_KEY);
   const service = new ConnectionService({ store, encryptionKey });
@@ -230,8 +241,9 @@ export async function createApp(
 
   app.use('/api', connectionsRouter(service, env));
   app.use('/api', catalogRouter(service, catalog, env));
-  app.use('/api', syncRouter(service, catalog, env, settings));
+  app.use('/api', syncRouter(service, catalog, env, settings, logs));
   app.use('/api', invoicesRouter(service, env, invoices));
+  app.use('/api', logsRouter(logs));
 
   // ── El panel ──────────────────────────────────────────────────────────────
   //
@@ -269,6 +281,7 @@ export async function createApp(
     '/sincronizar',
     '/productos',
     '/comprobantes',
+    '/cambios',
   ];
 
   for (const ruta of RUTAS_DEL_PANEL) app.get(ruta, servirPanel);
@@ -295,8 +308,8 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const { store, catalog, invoices, settings, webhooks, kind } = await resolveStore(env);
-  const { app } = await createApp(env, store, kind, catalog, invoices, settings, webhooks);
+  const { store, catalog, invoices, settings, webhooks, logs, kind } = await resolveStore(env);
+  const { app } = await createApp(env, store, kind, catalog, invoices, settings, webhooks, logs);
 
   app.listen(env.PORT, () => {
     logger.info(

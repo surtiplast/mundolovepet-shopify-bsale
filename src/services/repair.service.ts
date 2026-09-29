@@ -89,6 +89,8 @@ export interface ResultadoReparacion {
   reparados: number;
   fallidos: number;
   errores: Array<{ sku: string; mensaje: string }>;
+  /** Las reparaciones que de verdad se escribieron, para el registro de cambios. */
+  reparacionesAplicadas: Reparacion[];
 }
 
 /**
@@ -245,7 +247,7 @@ export async function aplicarReparacion(
   client: ShopifyClient,
   plan: PlanReparacion,
 ): Promise<ResultadoReparacion> {
-  const resultado: ResultadoReparacion = { reparados: 0, fallidos: 0, errores: [] };
+  const resultado: ResultadoReparacion = { reparados: 0, fallidos: 0, errores: [], reparacionesAplicadas: [] };
 
   const porProducto = new Map<string, Reparacion[]>();
   for (const r of plan.reparaciones) {
@@ -267,6 +269,7 @@ export async function aplicarReparacion(
 
       if (r.ok) {
         resultado.reparados += grupo.length;
+        resultado.reparacionesAplicadas.push(...grupo);
       } else {
         resultado.fallidos += grupo.length;
         for (const g of grupo) {

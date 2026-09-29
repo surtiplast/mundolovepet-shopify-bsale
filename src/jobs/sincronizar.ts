@@ -56,6 +56,8 @@ import { compararCatalogos } from '../services/matching.service.js';
 import { planificar, aplicarStock, aplicarPrecios } from '../services/sync.service.js';
 import { planificarReparacion, anadirCostosReparacion, aplicarReparacion } from '../services/repair.service.js';
 import { planificarCreacion, anadirCostos, crearProductos } from '../services/create.service.js';
+import { registrosDeSync, registrosDeReparacion, registrosDeCreacion } from '../services/changelog.service.js';
+import { PrismaSyncLogStore, type PrismaSyncLogLike, type NuevoRegistro } from '../db/synclog.store.js';
 import type { ShopifyVariant } from '../integrations/shopify/client.js';
 
 async function main(): Promise<void> {
@@ -82,6 +84,8 @@ async function main(): Promise<void> {
   });
   const catalogo = new PrismaCatalogStore(prisma as unknown as PrismaCatalogLike);
   const settings = new PrismaSettingsStore(prisma as unknown as PrismaSettingsLike);
+  const logs = new PrismaSyncLogStore(prisma as unknown as PrismaSyncLogLike);
+  const cambiosDeLaCorrida: NuevoRegistro[] = [];
   // Los botones del panel guardan aquí, no en el .env: este proceso es aparte
   // del servidor HTTP (lo lanza el cron vía `docker exec`), así que sólo la
   // base de datos compartida puede avisarle de un cambio hecho desde el
@@ -183,6 +187,7 @@ async function main(): Promise<void> {
         async (client) => {
           const r = await aplicarStock(client, planStock, locationId!);
           resumen.stock = r;
+          cambiosDeLaCorrida.push(...registrosDeSync(r.cambiosAplicados, 'STOCK', 'CRON'));
         },
       );
     } else {
@@ -202,6 +207,7 @@ async function main(): Promise<void> {
         async (client) => {
           const r = await aplicarPrecios(client, planPrecio, productoPorVariante);
           resumen.precios = r;
+          cambiosDeLaCorrida.push(...registrosDeSync(r.cambiosAplicados, 'PRECIO', 'CRON'));
         },
       );
     } else {
@@ -231,6 +237,7 @@ async function main(): Promise<void> {
         async (client) => {
           const r = await aplicarReparacion(client, planReparacion);
           resumen.costo = { ...r, ...costos };
+          cambiosDeLaCorrida.push(...registrosDeReparacion(r.reparacionesAplicadas, 'CRON'));
         },
       );
     } else {
@@ -269,6 +276,7 @@ async function main(): Promise<void> {
         async (client) => {
           const r = await crearProductos(client, planCreacion, locationId!);
           resumen.productosNuevos = { ...r, ...costos };
+          cambiosDeLaCorrida.push(...registrosDeCreacion(r.candidatosCreados, 'CRON'));
         },
       );
     } else {
@@ -276,6 +284,15 @@ async function main(): Promise<void> {
     }
   } else {
     resumen.productosNuevos = { motivo: 'desactivado' };
+  }
+
+  // Igual que en las rutas manuales: se guarda al final y sin arriesgar el
+  // resultado de la corrida por esto. Los cambios ya están escritos en
+  // Shopify; que falle el apunte no debe hacer fallar el cron entero.
+  try {
+    await logs.registrar(cambiosDeLaCorrida);
+  } catch (error) {
+    logger.error({ err: (error as Error).message }, 'No se pudo guardar el registro de cambios');
   }
 
   logger.info({ ...resumen, segundos: Math.round((Date.now() - inicio) / 1000) },
