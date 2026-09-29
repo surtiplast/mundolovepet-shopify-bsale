@@ -49,6 +49,8 @@ export interface BsaleDiscovery {
   suggestions: {
     boletaId: number | null;
     facturaId: number | null;
+    notaCreditoBoletaId: number | null;
+    notaCreditoFacturaId: number | null;
     igvTaxId: number | null;
     note: string;
   };
@@ -351,6 +353,11 @@ export class ConnectionService {
 
     const boleta = pickDocumentType(documentTypes.items, 'boleta');
     const factura = pickDocumentType(documentTypes.items, 'factura');
+    // Nota de crédito: el nombre lleva las dos palabras y además «boleta» o
+    // «factura» —«NOTA DE CRÉDITO T - BOLETA», «NOTA DE CRÉDITO T - FACTURA»
+    // en esta cuenta—, así que hace falta que calcen las tres, no una sola.
+    const notaCreditoBoleta = pickCreditNoteType(documentTypes.items, 'boleta');
+    const notaCreditoFactura = pickCreditNoteType(documentTypes.items, 'factura');
     const igv = taxes.items.find((t) => /igv|impuesto general/i.test(t.name ?? ''));
 
     return {
@@ -370,6 +377,8 @@ export class ConnectionService {
       suggestions: {
         boletaId: boleta?.id ?? null,
         facturaId: factura?.id ?? null,
+        notaCreditoBoletaId: notaCreditoBoleta?.id ?? null,
+        notaCreditoFacturaId: notaCreditoFactura?.id ?? null,
         igvTaxId: igv?.id ?? null,
         note:
           'Sugerencias por coincidencia de nombre. Confírmalas en el panel antes de emitir: ' +
@@ -387,6 +396,23 @@ function pickDocumentType(
   const matches = types.filter(
     (t) => new RegExp(keyword, 'i').test(t.name ?? '') && t.isSalesNote !== 1 && t.state !== 1,
   );
+  return matches.find((t) => t.isElectronicDocument === 1) ?? matches[0];
+}
+
+/** Como `pickDocumentType`, pero exige «nota» + «crédito» + el tipo base a la vez. */
+function pickCreditNoteType(
+  types: BsaleDocumentType[],
+  tipoBase: 'boleta' | 'factura',
+): BsaleDocumentType | undefined {
+  const matches = types.filter((t) => {
+    const nombre = t.name ?? '';
+    return (
+      /nota/i.test(nombre) &&
+      /cr[eé]dito/i.test(nombre) &&
+      new RegExp(tipoBase, 'i').test(nombre) &&
+      t.state !== 1
+    );
+  });
   return matches.find((t) => t.isElectronicDocument === 1) ?? matches[0];
 }
 

@@ -249,6 +249,54 @@ export interface DocumentoEmitido {
   client?: { id?: string | number } | null;
 }
 
+/** El documento original, con sus líneas y su cliente. GET /v1/documents/{id}.json?expand=[details,client] */
+export interface DocumentoConDetalle {
+  id: number;
+  documentTypeId?: number;
+  client?: Record<string, unknown> | null;
+  details?: {
+    items: Array<{
+      id: number;
+      quantity: number;
+      netUnitValue?: number;
+      variant?: { id?: number } | null;
+    }>;
+  };
+}
+
+/**
+ * Lo que se manda para anular con nota de crédito. **Endpoint distinto al de
+ * emitir**: `POST /v1/returns.json`, no `/v1/documents.json`. La forma del
+ * cuerpo tampoco se parece — se confirmó contra
+ * https://docs.bsale.dev/PE/devoluciones/, no se adivinó.
+ */
+export interface NuevaNotaCredito {
+  documentTypeId: number;
+  officeId: number;
+  emissionDate: number;
+  expirationDate: number;
+  /** El `id` (no el `salesId`) del documento que se está anulando. */
+  referenceDocumentId: number;
+  /** Texto libre: por qué se anula. */
+  motive: string;
+  declare: 0 | 1;
+  /** `0`: devolución de dinero. Es el único caso que cubre esta app —un
+   * pedido reembolsado en Shopify—; `1`/`2`/`3` (crédito a nueva venta,
+   * abono a línea de crédito, otra devolución) no aplican aquí. */
+  type: 0 | 1 | 2 | 3;
+  /** En `0` para una devolución de cantidades normal, que es el único caso
+   * que arma `planificarNotaCredito`. */
+  priceAdjustment: 0 | 1;
+  editTexts: 0 | 1;
+  /**
+   * Obligatorio según la documentación de Bsale, y con los MISMOS datos que
+   * el documento original si los tenía. Se omite sólo cuando el original —
+   * una boleta a consumidor final— tampoco lo tenía.
+   */
+  client?: Record<string, unknown>;
+  details: Array<{ documentDetailId: number; quantity: number; unitValue?: number }>;
+}
+
 /** Precio de una variante en una lista. GET /v1/price_lists/{id}/details.json */
 export interface BsalePriceDetail {
   href: string;
@@ -514,6 +562,37 @@ export class BsaleClient {
     }
 
     return this.post<DocumentoEmitido>('/documents.json', documento);
+  }
+
+  /**
+   * El documento original, con sus líneas (`documentDetailId` de cada una) y
+   * su cliente. Hace falta antes de anular: la nota de crédito referencia las
+   * líneas concretas del original, no el pedido de Shopify, y su `client`
+   * tiene que calzar con el del original o Bsale la rechaza.
+   */
+  async obtenerDocumento(documentId: number): Promise<DocumentoConDetalle> {
+    return this.get<DocumentoConDetalle>(`/documents/${documentId}.json`, {
+      expand: '[details,client]',
+    });
+  }
+
+  /**
+   * Anula un comprobante con una nota de crédito. **Esto también declara ante
+   * SUNAT y no se deshace.**
+   *
+   * A diferencia de `emitirDocumento`, aquí no hay un `salesId` que proteja
+   * contra un reintento accidental —Bsale no lo admite en `/returns.json`—,
+   * así que el candado real es el de más arriba: `invoicesRouter` no deja que
+   * dos peticiones para el mismo pedido corran a la vez.
+   */
+  async emitirNotaCredito(nota: NuevaNotaCredito): Promise<DocumentoEmitido> {
+    if (nota.details.length === 0) {
+      throw new IntegrationError('No se puede anular un comprobante sin líneas.', {
+        provider: 'BSALE',
+        retryable: false,
+      });
+    }
+    return this.post<DocumentoEmitido>('/returns.json', nota);
   }
 
   // ── Transporte ─────────────────────────────────────────────────────────────

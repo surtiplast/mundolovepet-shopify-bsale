@@ -12,9 +12,14 @@ import {
   claveIdempotencia,
   fechaEmision,
   correoDelCliente,
+  planificarNotaCredito,
+  emitirNotaCredito,
   type ConfigComprobante,
+  type ConfigNotaCredito,
 } from '../src/services/invoice.service.js';
 import type { PedidoShopify } from '../src/integrations/shopify/client.js';
+import type { DocumentoConDetalle } from '../src/integrations/bsale/client.js';
+import type { EmisionOriginal } from '../src/db/invoice.store.js';
 
 const RUC = '20131312955';
 
@@ -384,5 +389,167 @@ describe('el correo al cliente', () => {
       const p = pedido({ email: 'esto-no-es-un-correo', cliente: null });
       expect(correoDelCliente(p)).toBeNull();
     });
+  });
+});
+
+describe('planificarNotaCredito', () => {
+  const CONFIG_NOTA: ConfigNotaCredito = {
+    officeId: 1,
+    doctypeNotaCreditoBoletaId: 9,
+    doctypeNotaCreditoFacturaId: 43,
+  };
+
+  function emision(over: Partial<EmisionOriginal> = {}): EmisionOriginal {
+    return {
+      orderSyncId: 'cuid-orden-1',
+      bsaleDocumentId: 500,
+      documentTypeId: 1,
+      kind: 'BOLETA',
+      serialNumber: 'B001-1234',
+      number: 1234,
+      ...over,
+    };
+  }
+
+  function documentoOriginal(over: Partial<DocumentoConDetalle> = {}): DocumentoConDetalle {
+    return {
+      id: 500,
+      client: { code: '45678912', city: 'Lima' },
+      details: { items: [{ id: 9001, quantity: 2, netUnitValue: 50 }] },
+      ...over,
+    };
+  }
+
+  it('arma la nota con el documentTypeId de boleta o factura según corresponda', () => {
+    const planBoleta = planificarNotaCredito(emision({ kind: 'BOLETA' }), documentoOriginal(), 'Cliente arrepentido', CONFIG_NOTA);
+    expect(planBoleta.nota?.documentTypeId).toBe(9);
+
+    const planFactura = planificarNotaCredito(emision({ kind: 'FACTURA' }), documentoOriginal(), 'Cliente arrepentido', CONFIG_NOTA);
+    expect(planFactura.nota?.documentTypeId).toBe(43);
+  });
+
+  it('referencia el documento original por su id, no por el salesId ni el pedido de Shopify', () => {
+    const plan = planificarNotaCredito(emision({ bsaleDocumentId: 777 }), documentoOriginal({ id: 777 }), 'Reembolso', CONFIG_NOTA);
+    expect(plan.nota?.referenceDocumentId).toBe(777);
+  });
+
+  it('siempre es type:0 (devolución de dinero) — el único caso que cubre esta app', () => {
+    const plan = planificarNotaCredito(emision(), documentoOriginal(), 'Reembolso', CONFIG_NOTA);
+    expect(plan.nota?.type).toBe(0);
+    expect(plan.nota?.priceAdjustment).toBe(0);
+    expect(plan.nota?.editTexts).toBe(0);
+    expect(plan.nota?.declare).toBe(1);
+  });
+
+  it('copia las líneas del documento original por su documentDetailId, no por SKU', () => {
+    const doc = documentoOriginal({
+      details: { items: [{ id: 111, quantity: 1, netUnitValue: 10 }, { id: 222, quantity: 3, netUnitValue: 20 }] },
+    });
+    const plan = planificarNotaCredito(emision(), doc, 'Reembolso', CONFIG_NOTA);
+    expect(plan.nota?.details).toEqual([
+      { documentDetailId: 111, quantity: 1 },
+      { documentDetailId: 222, quantity: 3 },
+    ]);
+  });
+
+  it('sólo reenvía del cliente original los campos conocidos, no el objeto crudo de Bsale', () => {
+    const doc = documentoOriginal({
+      client: { id: 55, href: 'https://api.bsale.io/v1/clients/55.json', code: '45678912', city: 'Lima', algoInesperado: 'x' },
+    });
+    const plan = planificarNotaCredito(emision(), doc, 'Reembolso', CONFIG_NOTA);
+    expect(plan.nota?.client).toEqual({ code: '45678912', city: 'Lima' });
+  });
+
+  it('sin cliente en el documento original (boleta a consumidor final), no manda client', () => {
+    const doc = documentoOriginal({ client: null });
+    const plan = planificarNotaCredito(emision(), doc, 'Reembolso', CONFIG_NOTA);
+    expect(plan.nota?.client).toBeUndefined();
+  });
+
+  it('no arma nada si falta el doctype de nota de crédito para ese tipo', () => {
+    const plan = planificarNotaCredito(emision({ kind: 'BOLETA' }), documentoOriginal(), 'Reembolso', {
+      officeId: 1,
+      doctypeNotaCreditoFacturaId: 43,
+      // doctypeNotaCreditoBoletaId ausente a propósito.
+    });
+    expect(plan.nota).toBeNull();
+    expect(plan.motivos.join(' ')).toMatch(/BSALE_DOCTYPE_NOTA_CREDITO_BOLETA_ID/);
+  });
+
+  it('no arma nada si el documento original no tiene líneas', () => {
+    const plan = planificarNotaCredito(emision(), documentoOriginal({ details: { items: [] } }), 'Reembolso', CONFIG_NOTA);
+    expect(plan.nota).toBeNull();
+    expect(plan.motivos.join(' ')).toMatch(/no tiene líneas/);
+  });
+
+  it('no arma nada sin motivo', () => {
+    const plan = planificarNotaCredito(emision(), documentoOriginal(), '   ', CONFIG_NOTA);
+    expect(plan.nota).toBeNull();
+    expect(plan.motivos.join(' ')).toMatch(/motivo/i);
+  });
+});
+
+describe('emitirNotaCredito', () => {
+  function bsaleFalso(over: Record<string, unknown> = {}) {
+    return {
+      emitirNotaCredito: vi.fn(async () => ({
+        id: 900,
+        number: 55,
+        serialNumber: 'BC01-55',
+        emissionDate: 1755475200,
+        totalAmount: 118,
+        token: 'xyz',
+        informed: 0,
+      })),
+      ...over,
+    };
+  }
+
+  const CONFIG_NOTA: ConfigNotaCredito = { officeId: 1, doctypeNotaCreditoBoletaId: 9 };
+
+  it('no llama a Bsale si el plan no se pudo armar', async () => {
+    const bsale = bsaleFalso();
+    const plan = planificarNotaCredito(
+      { orderSyncId: 'x', bsaleDocumentId: 1, documentTypeId: 1, kind: 'BOLETA', serialNumber: 'B1', number: 1 },
+      { id: 1, details: { items: [] } },
+      'Reembolso',
+      CONFIG_NOTA,
+    );
+    const r = await emitirNotaCredito(bsale as never, plan);
+
+    expect(r.ok).toBe(false);
+    expect(bsale.emitirNotaCredito).not.toHaveBeenCalled();
+  });
+
+  it('devuelve la nota de crédito emitida', async () => {
+    const bsale = bsaleFalso();
+    const plan = planificarNotaCredito(
+      { orderSyncId: 'x', bsaleDocumentId: 1, documentTypeId: 1, kind: 'BOLETA', serialNumber: 'B1', number: 1 },
+      { id: 1, details: { items: [{ id: 1, quantity: 1, netUnitValue: 10 }] } },
+      'Reembolso',
+      CONFIG_NOTA,
+    );
+    const r = await emitirNotaCredito(bsale as never, plan);
+
+    expect(r.ok).toBe(true);
+    expect(r.documento?.serialNumber).toBe('BC01-55');
+  });
+
+  it('un fallo de Bsale se devuelve como error, no como excepción', async () => {
+    const bsale = bsaleFalso({
+      emitirNotaCredito: vi.fn(async () => {
+        throw new Error('El documento ya fue anulado');
+      }),
+    });
+    const plan = planificarNotaCredito(
+      { orderSyncId: 'x', bsaleDocumentId: 1, documentTypeId: 1, kind: 'BOLETA', serialNumber: 'B1', number: 1 },
+      { id: 1, details: { items: [{ id: 1, quantity: 1, netUnitValue: 10 }] } },
+      'Reembolso',
+      CONFIG_NOTA,
+    );
+    const r = await emitirNotaCredito(bsale as never, plan);
+
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/ya fue anulado/);
   });
 });

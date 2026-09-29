@@ -56,6 +56,10 @@ const schema = z.object({
   BSALE_PRICE_LIST_ID: z.coerce.number().int().positive().optional(),
   BSALE_DOCTYPE_BOLETA_ID: z.coerce.number().int().positive().optional(),
   BSALE_DOCTYPE_FACTURA_ID: z.coerce.number().int().positive().optional(),
+  // Para anular con nota de crédito (Fase 7). Opcionales hasta entonces: sin
+  // ellos el botón de anular queda desactivado, no la app entera.
+  BSALE_DOCTYPE_NOTA_CREDITO_BOLETA_ID: z.coerce.number().int().positive().optional(),
+  BSALE_DOCTYPE_NOTA_CREDITO_FACTURA_ID: z.coerce.number().int().positive().optional(),
   BSALE_TAX_ID_IGV: z.coerce.number().int().positive().optional(),
   BSALE_WEBHOOK_PATH_SECRET: z.string().optional(),
 

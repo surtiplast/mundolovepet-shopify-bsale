@@ -198,3 +198,71 @@ describe('BsaleClient · obtenerCosto', () => {
     await expect(client.obtenerCosto(123)).resolves.toBe(12.5);
   });
 });
+
+describe('BsaleClient · obtenerDocumento', () => {
+  it('pide las líneas y el cliente con expand, no sólo el documento pelado', async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ id: 500, client: { code: '45678912' }, details: { items: [] } }),
+    );
+    const client = makeClient(fetchMock as unknown as typeof fetch, 1);
+    await client.obtenerDocumento(500);
+
+    const url = fetchMock.mock.calls[0]![0] as string;
+    expect(url).toContain('/documents/500.json');
+    expect(url).toContain('expand=');
+    expect(decodeURIComponent(url)).toContain('[details,client]');
+  });
+
+  it('propaga un 404 en vez de devolver un documento vacío', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ error: 'not found' }, 404));
+    const client = makeClient(fetchMock as unknown as typeof fetch, 1);
+
+    await expect(client.obtenerDocumento(999)).rejects.toMatchObject({ provider: 'BSALE', status: 404 });
+  });
+});
+
+describe('BsaleClient · emitirNotaCredito', () => {
+  const notaValida = {
+    documentTypeId: 9,
+    officeId: 1,
+    emissionDate: 1755475200,
+    expirationDate: 1755475200,
+    referenceDocumentId: 500,
+    motive: 'Pedido reembolsado',
+    declare: 1 as const,
+    type: 0 as const,
+    priceAdjustment: 0 as const,
+    editTexts: 0 as const,
+    details: [{ documentDetailId: 111, quantity: 1 }],
+  };
+
+  it('anula contra /returns.json, NO contra /documents.json', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ id: 900, number: 55, serialNumber: 'BC01-55' }));
+    const client = makeClient(fetchMock as unknown as typeof fetch, 1);
+    await client.emitirNotaCredito(notaValida);
+
+    const url = fetchMock.mock.calls[0]![0] as string;
+    const init = fetchMock.mock.calls[0]![1] as RequestInit;
+    expect(url).toContain('/returns.json');
+    expect(url).not.toContain('/documents.json');
+    expect(init.method).toBe('POST');
+  });
+
+  it('rechaza anular sin líneas antes de llamar a Bsale', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ id: 900 }));
+    const client = makeClient(fetchMock as unknown as typeof fetch, 1);
+
+    await expect(client.emitirNotaCredito({ ...notaValida, details: [] })).rejects.toMatchObject({
+      provider: 'BSALE',
+      retryable: false,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('un rechazo de Bsale (comprobante ya anulado) se propaga, no se traga', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ error: 'El documento ya fue anulado' }, 422));
+    const client = makeClient(fetchMock as unknown as typeof fetch, 1);
+
+    await expect(client.emitirNotaCredito(notaValida)).rejects.toMatchObject({ provider: 'BSALE', status: 422 });
+  });
+});

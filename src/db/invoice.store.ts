@@ -69,6 +69,32 @@ export interface ResumenEmision {
   tienePdf: boolean;
 }
 
+/** Lo que hace falta del comprobante original para poder anularlo. */
+export interface EmisionOriginal {
+  /** El id interno del `OrderSync` — hace falta como referencia al guardar la nota. */
+  orderSyncId: string;
+  bsaleDocumentId: number;
+  documentTypeId: number;
+  kind: 'BOLETA' | 'FACTURA';
+  serialNumber: string;
+  number: number;
+}
+
+export interface NotaCreditoGuardada {
+  orderSyncId: string;
+  bsaleDocumentId: number;
+  documentTypeId: number;
+  /** El `id` (no `bsaleDocumentId`) del documento original que se anula. */
+  referenceDocumentId: number;
+  serialNumber: string;
+  number: number;
+  emissionDate: number;
+  totalAmount: number;
+  motive: string;
+  sunatState: number | null;
+  sunatMessage: string | null;
+}
+
 export interface InvoiceStore {
   /** Guarda pedido y comprobante en una sola transacción. */
   registrar(emision: EmisionGuardada): Promise<void>;
@@ -81,12 +107,25 @@ export interface InvoiceStore {
    * tenga puede abrir la factura sin más comprobación.
    */
   urlPdfDe(shopifyOrderId: string): Promise<string | null>;
+  /** El comprobante original de un pedido, o `null` si nunca se emitió. */
+  obtenerEmision(shopifyOrderId: string): Promise<EmisionOriginal | null>;
+  /**
+   * Guarda la nota de crédito y marca el pedido como `CANCELLED`, en una sola
+   * transacción — igual que `registrar`: o quedan las dos cosas, o ninguna.
+   */
+  registrarNotaCredito(nota: NotaCreditoGuardada): Promise<void>;
 }
 
 /** Para desarrollo sin base de datos y para las pruebas. */
 export class InMemoryInvoiceStore implements InvoiceStore {
   private readonly filas = new Map<string, ResumenEmision>();
   private readonly urls = new Map<string, string>();
+  // El original se conserva aparte y NUNCA se borra al anular: es lo que
+  // permite auditar qué se emitió, aunque `filas` ya no lo enseñe como
+  // «facturado» (igual que en Postgres, `listarFacturados` sólo enseña los
+  // que siguen SYNCED).
+  private readonly originales = new Map<string, EmisionOriginal>();
+  private readonly notasCredito: NotaCreditoGuardada[] = [];
 
   async registrar(emision: EmisionGuardada): Promise<void> {
     // El unique de `shopifyOrderId` en PostgreSQL rechazaría el segundo. Aquí
@@ -108,6 +147,14 @@ export class InMemoryInvoiceStore implements InvoiceStore {
     if (emision.documento.urlPdf) {
       this.urls.set(emision.shopifyOrderId, emision.documento.urlPdf);
     }
+    this.originales.set(emision.shopifyOrderId, {
+      orderSyncId: emision.shopifyOrderId,
+      bsaleDocumentId: emision.documento.bsaleDocumentId,
+      documentTypeId: emision.documento.documentTypeId,
+      kind: emision.kind,
+      serialNumber: emision.documento.serialNumber,
+      number: emision.documento.number,
+    });
   }
 
   async listarFacturados(): Promise<Map<string, ResumenEmision>> {
@@ -117,6 +164,16 @@ export class InMemoryInvoiceStore implements InvoiceStore {
   async urlPdfDe(shopifyOrderId: string): Promise<string | null> {
     return this.urls.get(shopifyOrderId) ?? null;
   }
+
+  async obtenerEmision(shopifyOrderId: string): Promise<EmisionOriginal | null> {
+    return this.originales.get(shopifyOrderId) ?? null;
+  }
+
+  async registrarNotaCredito(nota: NotaCreditoGuardada): Promise<void> {
+    this.notasCredito.push(nota);
+    // Desaparece de «facturados», igual que en Postgres al pasar a CANCELLED.
+    this.filas.delete(nota.orderSyncId);
+  }
 }
 
 interface OrderSyncRow {
@@ -124,6 +181,8 @@ interface OrderSyncRow {
   shopifyOrderId: bigint | string;
   documentKind: string | null;
   document: {
+    bsaleDocumentId: number;
+    documentTypeId: number;
     serialNumber: string;
     number: number;
     totalAmount: unknown;
@@ -138,8 +197,12 @@ export interface PrismaInvoiceLike {
   orderSync: {
     create(args: { data: Record<string, unknown> }): Promise<{ id: string }>;
     findMany(args?: Record<string, unknown>): Promise<OrderSyncRow[]>;
+    update(args: { where: Record<string, unknown>; data: Record<string, unknown> }): Promise<unknown>;
   };
   bsaleDocument: {
+    create(args: { data: Record<string, unknown> }): Promise<unknown>;
+  };
+  creditNote: {
     create(args: { data: Record<string, unknown> }): Promise<unknown>;
   };
 }
@@ -219,5 +282,52 @@ export class PrismaInvoiceStore implements InvoiceStore {
       include: { document: true },
     });
     return filas[0]?.document?.bsaleUrlPdf ?? null;
+  }
+
+  async obtenerEmision(shopifyOrderId: string): Promise<EmisionOriginal | null> {
+    const filas = await this.prisma.orderSync.findMany({
+      where: { shopifyOrderId: BigInt(shopifyOrderId) },
+      include: { document: true },
+    });
+    const fila = filas[0];
+    if (!fila?.document) return null;
+
+    return {
+      orderSyncId: fila.id,
+      bsaleDocumentId: fila.document.bsaleDocumentId,
+      documentTypeId: fila.document.documentTypeId,
+      kind: (fila.documentKind ?? 'BOLETA') as 'BOLETA' | 'FACTURA',
+      serialNumber: fila.document.serialNumber,
+      number: fila.document.number,
+    };
+  }
+
+  async registrarNotaCredito(nota: NotaCreditoGuardada): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      await tx.creditNote.create({
+        data: {
+          orderSyncId: nota.orderSyncId,
+          bsaleDocumentId: nota.bsaleDocumentId,
+          documentTypeId: nota.documentTypeId,
+          referenceDocumentId: nota.referenceDocumentId,
+          serialNumber: nota.serialNumber,
+          number: nota.number,
+          emissionDate: new Date(nota.emissionDate * 1000),
+          totalAmount: nota.totalAmount,
+          motive: nota.motive,
+          sunatState: nota.sunatState,
+          sunatMessage: nota.sunatMessage,
+        },
+      });
+
+      // CANCELLED, no ERROR: el comprobante original sigue siendo válido, lo
+      // que cambia es que ya no representa una venta vigente. `listarFacturados`
+      // sólo enseña `SYNCED`, así que el pedido deja de mostrarse ahí — la nota
+      // de crédito queda como su propio rastro en `CreditNote`.
+      await tx.orderSync.update({
+        where: { id: nota.orderSyncId },
+        data: { status: 'CANCELLED' },
+      });
+    });
   }
 }

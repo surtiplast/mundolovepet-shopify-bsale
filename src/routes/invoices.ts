@@ -16,8 +16,11 @@ import type { ConnectionService } from '../services/connection.service.js';
 import {
   planificarComprobante,
   emitirComprobante,
+  planificarNotaCredito,
+  emitirNotaCredito,
   type ConfigComprobante,
   type PlanComprobante,
+  type ConfigNotaCredito,
 } from '../services/invoice.service.js';
 import type { PedidoShopify } from '../integrations/shopify/client.js';
 import type { InvoiceStore } from '../db/invoice.store.js';
@@ -33,6 +36,17 @@ const emitirLimiter = rateLimit({
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   message: { error: 'Demasiadas emisiones seguidas. Espera unos minutos.' },
+});
+
+// Más estrecho que emitir: anular es la operación de facturación más
+// destructiva de la app, y un reintento del navegador no debe poder
+// disparar varias notas de crédito seguidas.
+const anularLimiter = rateLimit({
+  windowMs: 5 * 60_000,
+  limit: 20,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Demasiadas anulaciones seguidas. Espera unos minutos.' },
 });
 
 /**
@@ -344,6 +358,125 @@ export function invoicesRouter(
       });
     } catch (error) {
       responderError(res, error, 'No se pudo emitir el comprobante.');
+    }
+  });
+
+  /**
+   * Anula con nota de crédito. **Declara ante SUNAT y no se deshace.**
+   *
+   * A diferencia de emitir, no relee el pedido de Shopify: todo lo que hace
+   * falta —qué se anula y con qué cliente— sale del comprobante que Bsale
+   * ya tiene, no de Shopify. Por eso el `id` de la URL se usa sólo para
+   * encontrar el pedido en la base de datos propia, sin llamar a Shopify.
+   */
+  router.post('/pedidos/:id/anular', anularLimiter, async (req: Request, res: Response) => {
+    if (String(req.query.confirmar) !== 'si') {
+      return res.status(400).json({
+        error: {
+          message: 'Anular declara una nota de crédito ante SUNAT y no se deshace. Añade confirmar=si.',
+        },
+      });
+    }
+
+    const motivo = String((req.body as { motivo?: unknown })?.motivo ?? '').trim();
+    if (!motivo) {
+      return res.status(400).json({ error: { message: 'Falta el motivo de la anulación.' } });
+    }
+
+    // El id llega como gid o como el legacyId numérico, igual que en emitir/
+    // simular — pero aquí basta con la parte numérica: no hace falta el gid
+    // completo para nada, porque esta ruta no vuelve a llamar a Shopify.
+    const legacyId = req.params.id!.startsWith('gid://')
+      ? req.params.id!.split('/').pop()!
+      : req.params.id!;
+
+    if (emisionesEnCurso.has(legacyId)) {
+      return res.status(409).json({
+        error: { message: 'Ya hay una operación en curso para este pedido. Espera a que termine.' },
+      });
+    }
+    emisionesEnCurso.add(legacyId);
+
+    try {
+      const emision = await emisiones.obtenerEmision(legacyId);
+      if (!emision) {
+        return res
+          .status(404)
+          .json({ error: { message: 'Este pedido no tiene un comprobante emitido para anular.' } });
+      }
+
+      if (!env.BSALE_OFFICE_ID) {
+        return res.status(400).json({
+          error: { message: 'Falta BSALE_OFFICE_ID. Pulsa «Descubrir configuración de Bsale».' },
+        });
+      }
+
+      const configNota: ConfigNotaCredito = {
+        officeId: env.BSALE_OFFICE_ID,
+        doctypeNotaCreditoBoletaId: env.BSALE_DOCTYPE_NOTA_CREDITO_BOLETA_ID,
+        doctypeNotaCreditoFacturaId: env.BSALE_DOCTYPE_NOTA_CREDITO_FACTURA_ID,
+      };
+
+      const { plan, resultado } = await service.usarBsale(env.BSALE_API_BASE_URL, async (bsale) => {
+        const documentoOriginal = await bsale.obtenerDocumento(emision.bsaleDocumentId);
+        const planNota = planificarNotaCredito(emision, documentoOriginal, motivo, configNota);
+        const resultadoNota = await emitirNotaCredito(bsale, planNota);
+        return { plan: planNota, resultado: resultadoNota };
+      });
+
+      if (!resultado.ok) {
+        logger.error({ pedido: legacyId, error: resultado.error }, 'Anulación fallida');
+        return res.status(502).json({ error: { message: resultado.error } });
+      }
+
+      // ── Registrar la nota de crédito ─────────────────────────────────────
+      // Igual que al emitir: va después y en su propio try. La nota ya existe
+      // en Bsale; que falle guardarla aquí no debe presentarse como un fallo
+      // de la anulación.
+      const doc = resultado.documento;
+      if (doc && plan.nota) {
+        try {
+          await emisiones.registrarNotaCredito({
+            orderSyncId: emision.orderSyncId,
+            bsaleDocumentId: doc.id,
+            documentTypeId: plan.nota.documentTypeId,
+            referenceDocumentId: emision.bsaleDocumentId,
+            serialNumber: doc.serialNumber ?? String(doc.number),
+            number: doc.number,
+            emissionDate: doc.emissionDate,
+            totalAmount: doc.totalAmount,
+            motive: motivo,
+            sunatState: doc.informed ?? null,
+            sunatMessage: doc.responseMsg ?? null,
+          });
+        } catch (error) {
+          logger.error(
+            { pedido: legacyId, err: (error as Error).message },
+            'La nota de crédito se emitió pero no se pudo registrar en la base de datos',
+          );
+        }
+      }
+
+      logger.warn(
+        { pedido: legacyId, documento: doc?.serialNumber, motivo },
+        'Comprobante anulado con nota de crédito',
+      );
+
+      res.json({
+        ok: true,
+        documento: {
+          id: doc?.id,
+          serie: doc?.serialNumber,
+          numero: doc?.number,
+          total: doc?.totalAmount,
+          sunat: doc?.informed,
+          mensajeSunat: doc?.responseMsg,
+        },
+      });
+    } catch (error) {
+      responderError(res, error, 'No se pudo anular el comprobante.');
+    } finally {
+      emisionesEnCurso.delete(legacyId);
     }
   });
 

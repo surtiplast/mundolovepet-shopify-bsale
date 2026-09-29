@@ -36,7 +36,10 @@ import type {
   DetalleDocumento,
   NuevoDocumento,
   DocumentoEmitido,
+  DocumentoConDetalle,
+  NuevaNotaCredito,
 } from '../integrations/bsale/client.js';
+import type { EmisionOriginal } from '../db/invoice.store.js';
 import { decidirComprobante, type DecisionComprobante } from '../domain/documento.js';
 
 /** Configuración que sale de las variables de entorno, ya validada. */
@@ -346,5 +349,140 @@ export async function emitirComprobante(
     return { ok: true, documento: emitido, yaExistia, error: null };
   } catch (error) {
     return { ok: false, documento: null, yaExistia: false, error: (error as Error).message };
+  }
+}
+
+// ── Anulación con nota de crédito ────────────────────────────────────────────
+
+/**
+ * Endpoint distinto, forma de comprobante distinta. Ver el docstring de
+ * `NuevaNotaCredito` en el cliente de Bsale para las fuentes.
+ */
+export interface ConfigNotaCredito {
+  officeId: number;
+  /** `undefined` si nunca se descubrió/configuró: entonces no se puede anular ese tipo. */
+  doctypeNotaCreditoBoletaId?: number;
+  doctypeNotaCreditoFacturaId?: number;
+}
+
+export interface PlanNotaCredito {
+  emision: EmisionOriginal;
+  motivo: string;
+  /** `null` cuando no se puede anular. `motivos` explica por qué. */
+  nota: NuevaNotaCredito | null;
+  motivos: string[];
+}
+
+/**
+ * De los datos del cliente que Bsale devuelve en el documento original, sólo
+ * se reenvían los campos que también acepta `NuevoCliente` al emitir (ver
+ * más arriba). El documento original puede traer campos propios de Bsale
+ * (`id`, `href`, contadores internos…) que no pintan nada en un cuerpo de
+ * entrada; reenviarlos tal cual es la forma más rápida de que `/returns.json`
+ * rechace la petición por un campo que no esperaba.
+ */
+function mapearClienteParaNota(
+  clienteOriginal: Record<string, unknown> | null | undefined,
+): Record<string, unknown> | undefined {
+  if (!clienteOriginal) return undefined;
+  const campos = ['code', 'city', 'municipality', 'address', 'firstName', 'lastName', 'company', 'email'];
+  const salida: Record<string, unknown> = {};
+  for (const campo of campos) {
+    const valor = clienteOriginal[campo];
+    if (valor !== undefined && valor !== null && valor !== '') salida[campo] = valor;
+  }
+  return Object.keys(salida).length > 0 ? salida : undefined;
+}
+
+/**
+ * Arma la nota de crédito. **No llama a nadie** — igual que
+ * `planificarComprobante`, es pura: recibe lo que ya se leyó de Bsale y
+ * devuelve el cuerpo que se mandaría, o el motivo por el que no se puede.
+ *
+ * `documentoOriginal` hay que haberlo pedido antes con
+ * `BsaleClient.obtenerDocumento(emision.bsaleDocumentId)`: sus líneas
+ * (`documentDetailId`) y su cliente son los que exige `/returns.json`, y no
+ * están en lo que esta app guarda de la emisión original.
+ */
+export function planificarNotaCredito(
+  emision: EmisionOriginal,
+  documentoOriginal: DocumentoConDetalle,
+  motivo: string,
+  config: ConfigNotaCredito,
+): PlanNotaCredito {
+  const motivos: string[] = [];
+  const motivoLimpio = motivo.trim();
+
+  const doctypeId =
+    emision.kind === 'FACTURA' ? config.doctypeNotaCreditoFacturaId : config.doctypeNotaCreditoBoletaId;
+  if (!doctypeId) {
+    motivos.push(
+      `Falta configurar BSALE_DOCTYPE_NOTA_CREDITO_${emision.kind}_ID. ` +
+        'Descúbrelo en el panel antes de anular.',
+    );
+  }
+
+  const detalles = documentoOriginal.details?.items ?? [];
+  if (detalles.length === 0) {
+    motivos.push('El documento original no tiene líneas que anular — no se pudieron leer de Bsale.');
+  }
+
+  if (!motivoLimpio) {
+    motivos.push('Hace falta indicar el motivo de la anulación.');
+  }
+
+  if (motivos.length > 0 || !doctypeId) {
+    return { emision, motivo: motivoLimpio, nota: null, motivos };
+  }
+
+  const hoy = fechaEmision(new Date());
+  const cliente = mapearClienteParaNota(documentoOriginal.client);
+
+  const nota: NuevaNotaCredito = {
+    documentTypeId: doctypeId,
+    officeId: config.officeId,
+    emissionDate: hoy,
+    expirationDate: hoy,
+    referenceDocumentId: emision.bsaleDocumentId,
+    motive: motivoLimpio.slice(0, 250),
+    declare: 1,
+    // Único caso que cubre este plan: un pedido de Shopify reembolsado, es
+    // decir, devolución de dinero. Ver el docstring de `NuevaNotaCredito`.
+    type: 0,
+    priceAdjustment: 0,
+    editTexts: 0,
+    ...(cliente ? { client: cliente } : {}),
+    details: detalles.map((d) => ({ documentDetailId: d.id, quantity: d.quantity })),
+  };
+
+  return { emision, motivo: motivoLimpio, nota, motivos };
+}
+
+export interface ResultadoAnulacion {
+  ok: boolean;
+  documento: DocumentoEmitido | null;
+  error: string | null;
+}
+
+/**
+ * Anula de verdad. **Esto también declara ante SUNAT y no se deshace.**
+ *
+ * A diferencia de `emitirComprobante`, aquí no hay cliente que buscar o crear
+ * primero: el cliente de la nota tiene que ser el mismo del documento
+ * original, así que ya viene resuelto en el plan.
+ */
+export async function emitirNotaCredito(
+  client: BsaleClient,
+  plan: PlanNotaCredito,
+): Promise<ResultadoAnulacion> {
+  if (!plan.nota) {
+    return { ok: false, documento: null, error: plan.motivos.join(' | ') || 'No se puede anular.' };
+  }
+
+  try {
+    const emitido = await client.emitirNotaCredito(plan.nota);
+    return { ok: true, documento: emitido, error: null };
+  } catch (error) {
+    return { ok: false, documento: null, error: (error as Error).message };
   }
 }

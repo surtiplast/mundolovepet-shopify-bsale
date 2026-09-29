@@ -11,6 +11,7 @@ import {
   InMemoryInvoiceStore,
   PrismaInvoiceStore,
   type EmisionGuardada,
+  type NotaCreditoGuardada,
   type PrismaInvoiceLike,
 } from '../src/db/invoice.store.js';
 
@@ -80,7 +81,55 @@ describe('InMemoryInvoiceStore', () => {
   it('empieza vacío', async () => {
     expect((await new InMemoryInvoiceStore().listarFacturados()).size).toBe(0);
   });
+
+  it('obtenerEmision devuelve null para un pedido nunca emitido', async () => {
+    const store = new InMemoryInvoiceStore();
+    expect(await store.obtenerEmision('no-existe')).toBeNull();
+  });
+
+  it('obtenerEmision devuelve lo necesario para anular: id de Bsale, tipo de documento, serie', async () => {
+    const store = new InMemoryInvoiceStore();
+    await store.registrar(emision());
+
+    const original = await store.obtenerEmision('5544332211');
+    expect(original).toMatchObject({
+      orderSyncId: '5544332211',
+      bsaleDocumentId: 500,
+      documentTypeId: 1,
+      kind: 'BOLETA',
+      serialNumber: 'B001-1234',
+      number: 1234,
+    });
+  });
+
+  it('registrarNotaCredito saca el pedido de «facturados» pero no borra su rastro', async () => {
+    const store = new InMemoryInvoiceStore();
+    await store.registrar(emision());
+
+    await store.registrarNotaCredito(notaCredito());
+
+    expect((await store.listarFacturados()).has('5544332211')).toBe(false);
+    // El original sigue disponible para auditar, aunque ya no esté «facturado».
+    expect(await store.obtenerEmision('5544332211')).not.toBeNull();
+  });
 });
+
+function notaCredito(over: Partial<NotaCreditoGuardada> = {}): NotaCreditoGuardada {
+  return {
+    orderSyncId: '5544332211',
+    bsaleDocumentId: 900,
+    documentTypeId: 9,
+    referenceDocumentId: 500,
+    serialNumber: 'BC01-55',
+    number: 55,
+    emissionDate: 1_755_475_200,
+    totalAmount: 118,
+    motive: 'Pedido reembolsado',
+    sunatState: 0,
+    sunatMessage: 'Aceptado',
+    ...over,
+  };
+}
 
 describe('PrismaInvoiceStore', () => {
   function prismaFalso(fallaEnDocumento = false) {
@@ -89,14 +138,17 @@ describe('PrismaInvoiceStore', () => {
       if (fallaEnDocumento) throw new Error('Falló al guardar el documento');
       return {};
     });
+    const orderSyncUpdate = vi.fn(async () => ({}));
+    const creditNoteCreate = vi.fn(async () => ({}));
 
     const tx: PrismaInvoiceLike = {
       $transaction: vi.fn(async (fn) => fn(tx)),
-      orderSync: { create: orderSyncCreate, findMany: vi.fn(async () => []) },
+      orderSync: { create: orderSyncCreate, findMany: vi.fn(async () => []), update: orderSyncUpdate },
       bsaleDocument: { create: bsaleDocumentCreate },
+      creditNote: { create: creditNoteCreate },
     };
 
-    return { tx, orderSyncCreate, bsaleDocumentCreate };
+    return { tx, orderSyncCreate, bsaleDocumentCreate, orderSyncUpdate, creditNoteCreate };
   }
 
   it('escribe el pedido y el documento', async () => {
@@ -158,5 +210,86 @@ describe('PrismaInvoiceStore', () => {
 
     const datos = orderSyncCreate.mock.calls[0]![0] as { data: { idempotencyKey: string } };
     expect(datos.data.idempotencyKey).toBe('shopify-order-5544332211');
+  });
+
+  describe('obtenerEmision', () => {
+    it('devuelve null si el pedido no tiene documento (nunca se emitió)', async () => {
+      const { tx } = prismaFalso();
+      expect(await new PrismaInvoiceStore(tx).obtenerEmision('5544332211')).toBeNull();
+    });
+
+    it('devuelve lo necesario para anular, leído del documento guardado', async () => {
+      const { tx } = prismaFalso();
+      tx.orderSync.findMany = vi.fn(async () => [
+        {
+          id: 'pedido-1',
+          shopifyOrderId: 5544332211n,
+          documentKind: 'BOLETA',
+          document: {
+            bsaleDocumentId: 500,
+            documentTypeId: 1,
+            serialNumber: 'B001-1234',
+            number: 1234,
+            totalAmount: 118 as unknown,
+            sunatState: 0,
+            emissionDate: new Date(1_755_475_200 * 1000),
+            bsaleUrlPdf: null,
+          },
+        },
+      ]);
+
+      const original = await new PrismaInvoiceStore(tx).obtenerEmision('5544332211');
+      expect(original).toMatchObject({
+        orderSyncId: 'pedido-1',
+        bsaleDocumentId: 500,
+        documentTypeId: 1,
+        kind: 'BOLETA',
+        serialNumber: 'B001-1234',
+        number: 1234,
+      });
+    });
+  });
+
+  describe('registrarNotaCredito', () => {
+    it('crea la nota de crédito y cancela el pedido en la misma transacción', async () => {
+      const { tx, creditNoteCreate, orderSyncUpdate } = prismaFalso();
+      await new PrismaInvoiceStore(tx).registrarNotaCredito(notaCredito());
+
+      expect(tx.$transaction).toHaveBeenCalledTimes(1);
+      expect(creditNoteCreate).toHaveBeenCalledTimes(1);
+      expect(orderSyncUpdate).toHaveBeenCalledTimes(1);
+    });
+
+    it('cancela el pedido, no lo marca como error: el comprobante original sigue siendo válido', async () => {
+      const { tx, orderSyncUpdate } = prismaFalso();
+      await new PrismaInvoiceStore(tx).registrarNotaCredito(notaCredito());
+
+      const args = orderSyncUpdate.mock.calls[0]![0] as { where: { id: string }; data: { status: string } };
+      expect(args.where.id).toBe('5544332211');
+      expect(args.data.status).toBe('CANCELLED');
+    });
+
+    it('guarda el id del documento original como referencia, no el de la propia nota', async () => {
+      const { tx, creditNoteCreate } = prismaFalso();
+      await new PrismaInvoiceStore(tx).registrarNotaCredito(notaCredito({ bsaleDocumentId: 900, referenceDocumentId: 500 }));
+
+      const datos = creditNoteCreate.mock.calls[0]![0] as {
+        data: { bsaleDocumentId: number; referenceDocumentId: number };
+      };
+      expect(datos.data.bsaleDocumentId).toBe(900);
+      expect(datos.data.referenceDocumentId).toBe(500);
+    });
+
+    it('si falla guardar la nota, el pedido no queda cancelado (misma transacción)', async () => {
+      const { tx, orderSyncUpdate } = prismaFalso();
+      tx.creditNote.create = vi.fn(async () => {
+        throw new Error('Falló al guardar la nota de crédito');
+      });
+
+      await expect(new PrismaInvoiceStore(tx).registrarNotaCredito(notaCredito())).rejects.toThrow(
+        /nota de crédito/i,
+      );
+      expect(orderSyncUpdate).not.toHaveBeenCalled();
+    });
   });
 });

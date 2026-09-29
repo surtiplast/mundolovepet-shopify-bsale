@@ -184,6 +184,7 @@ model OrderSync {
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
   document         BsaleDocument?
+  creditNotes      CreditNote[]
 
   @@index([status])
   @@index([createdAt])
@@ -218,6 +219,34 @@ model BsaleDocument {
   pdfFetchedAt    DateTime?
   createdAt       DateTime     @default(now())
   updatedAt       DateTime     @updatedAt
+}
+
+/// Nota de crédito emitida para anular un `BsaleDocument`.
+///
+/// Va en una tabla propia y no reemplaza al `BsaleDocument` del pedido:
+/// `BsaleDocument.orderSyncId` es único (un pedido tiene un solo comprobante
+/// original), pero anularlo no debe borrar ese rastro. Guardar la nota aparte
+/// deja los dos documentos —el original y el que lo anula— visibles a la vez,
+/// que es justo lo que hace falta para auditar qué pasó con un pedido.
+model CreditNote {
+  id              String    @id @default(cuid())
+  orderSyncId     String
+  orderSync       OrderSync @relation(fields: [orderSyncId], references: [id])
+  bsaleDocumentId Int       @unique
+  documentTypeId  Int
+  /// El `id` (no el `salesId`) del `BsaleDocument` que esta nota anula.
+  referenceDocumentId Int
+  serialNumber    String
+  number          Int
+  emissionDate    DateTime
+  totalAmount     Decimal   @db.Decimal(12, 2)
+  /// Por qué se anuló. Texto libre, pensado para la razón del reembolso de Shopify.
+  motive          String
+  sunatState      Int?
+  sunatMessage    String?
+  createdAt       DateTime  @default(now())
+
+  @@index([orderSyncId])
 }
 
 // ──────────────────── Trazabilidad ────────────────────

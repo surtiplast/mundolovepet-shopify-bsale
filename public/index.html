@@ -1424,7 +1424,8 @@ async function verPedidos(boton) {
             + (p.emitido.tienePdf
                 ? `<br><a href="/api/comprobantes/${encodeURIComponent(idPedido)}/pdf" target="_blank" rel="noopener"><small>Ver PDF</small></a>`
                 : '')
-            + (rechazado ? '<br><small>Rechazado por SUNAT</small>' : '');
+            + (rechazado ? '<br><small>Rechazado por SUNAT</small>' : '')
+            + `<br><button class="peligro" data-anular="${escapeHtml(p.id)}" data-nombre="${escapeHtml(p.nombre)}">Anular</button>`;
         } else if (p.puedeEmitirse) {
           accion = `<button class="peligro" data-emitir="${escapeHtml(p.id)}" data-nombre="${escapeHtml(p.nombre)}">Emitir</button>`;
         } else {
@@ -1443,6 +1444,9 @@ async function verPedidos(boton) {
 
       for (const b of $('pedCuerpo').querySelectorAll('[data-emitir]')) {
         b.onclick = () => emitirComprobante(b.dataset.emitir, b.dataset.nombre, b);
+      }
+      for (const b of $('pedCuerpo').querySelectorAll('[data-anular]')) {
+        b.onclick = () => anularComprobante(b.dataset.anular, b.dataset.nombre, b);
       }
 
       banner('ok', `${data.total} pedidos leídos. ${r.revisar} necesitan revisión.`);
@@ -1487,6 +1491,60 @@ async function emitirComprobante(id, nombre, boton) {
     boton.outerHTML = `<span class="cat-chip">${escapeHtml(d.serie || String(d.numero))}</span>`;
   } catch (err) {
     banner('err', 'Error de red al emitir.');
+    boton.disabled = false;
+    boton.textContent = original;
+  }
+}
+
+/**
+ * Anula un comprobante con nota de crédito. Igual de irreversible que emitir,
+ * y encima declara ante SUNAT: pide el motivo antes de confirmar, no después.
+ */
+async function anularComprobante(id, nombre, boton) {
+  const motivo = prompt(
+    `Se va a anular el comprobante del pedido ${nombre} con una nota de crédito.\n\n` +
+    `Esto DECLARA la nota ante SUNAT y no se puede deshacer.\n\n` +
+    `¿Por qué se anula? (por ejemplo: «Pedido reembolsado»)`
+  );
+  if (motivo === null) return;
+  if (!motivo.trim()) {
+    banner('err', 'Hace falta un motivo para anular.');
+    return;
+  }
+  if (!confirm(`¿Confirmar la anulación del pedido ${nombre}?\n\nMotivo: ${motivo}`)) return;
+
+  boton.disabled = true;
+  const original = boton.textContent;
+  boton.textContent = 'Anulando…';
+  try {
+    const res = await pedir(`/api/pedidos/${encodeURIComponent(id)}/anular?confirmar=si`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ motivo: motivo.trim() }),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      banner('err', data.error?.message || 'No se pudo anular.');
+      boton.disabled = false;
+      boton.textContent = original;
+      return;
+    }
+
+    const d = data.documento;
+    banner(
+      'ok',
+      `Nota de crédito ${d.serie || d.numero} emitida. El pedido ${nombre} quedó anulado.` +
+        (d.mensajeSunat ? ` SUNAT: ${d.mensajeSunat}` : ''),
+    );
+
+    const fila = boton.closest('tr');
+    if (fila) {
+      const celdaAccion = fila.lastElementChild;
+      celdaAccion.innerHTML = `<span class="cat-tag">Anulado</span><br><small>NC ${escapeHtml(d.serie || String(d.numero))}</small>`;
+    }
+  } catch (err) {
+    banner('err', 'Error de red al anular.');
     boton.disabled = false;
     boton.textContent = original;
   }
