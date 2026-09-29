@@ -40,6 +40,9 @@ export interface ItemCatalogo {
   barcode: string | null;
   /** La marca, si Bsale la manda. Va al campo «Proveedor» de Shopify. */
   marca: string | null;
+  /** El tipo de producto de Bsale («SNACK», «ALIMENTO», …). Va al campo
+   * «Tipo de producto» de Shopify. */
+  tipoProducto: string | null;
   nombre: string | null;
   /** Precio con impuestos incluidos. `null` si la variante no está en la lista. */
   precio: number | null;
@@ -66,6 +69,9 @@ export interface ResumenCatalogo {
    * otro camino.
    */
   conMarca: number;
+  /** Cuántas variantes traen tipo de producto desde Bsale. A diferencia de
+   * `conMarca`, éste sí suele venir — es la comprobación de que sigue así. */
+  conTipoProducto: number;
   leidoEn: string;
 }
 
@@ -149,6 +155,7 @@ export async function leerCatalogo(
       sku: skuCrudo,
       barcode: v.barCode?.trim() || null,
       marca: leerMarca(v.product),
+      tipoProducto: v.product?.product_type?.name?.trim() || null,
       // El nombre de la VARIANTE suele venir vacío; el comercial está en el
       // producto. Se prefiere la variante cuando existe («Talla M») y se cae al
       // producto cuando no, que es el caso mayoritario.
@@ -173,6 +180,7 @@ export async function leerCatalogo(
     sinPrecio: items.filter((i) => i.problemas.includes('SIN_PRECIO')).length,
     sinStock: items.filter((i) => i.problemas.includes('SIN_STOCK')).length,
     conMarca: items.filter((i) => i.marca).length,
+    conTipoProducto: items.filter((i) => i.tipoProducto).length,
     leidoEn: now().toISOString(),
   };
 

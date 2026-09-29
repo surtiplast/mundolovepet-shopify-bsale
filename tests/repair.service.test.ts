@@ -20,11 +20,15 @@ function bsale(over: Partial<ProductoGuardado> = {}): ProductoGuardado {
   return {
     sku: '74352029961567',
     barcode: '8595602559152',
+    brand: null,
+    category: null,
     bsaleVariantId: 1,
     bsaleProductId: 9,
     name: 'BRIT CARE GRAIN FREE',
     bsalePrice: 101,
     bsaleStock: 9,
+    bsaleCosto: null,
+    costoRevisadoEl: null,
     ...over,
   };
 }

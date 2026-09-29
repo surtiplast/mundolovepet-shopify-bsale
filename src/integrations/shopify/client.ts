@@ -702,6 +702,8 @@ export interface ProductoNuevo {
    * filtros de la tienda.
    */
   marca: string | null;
+  /** El tipo de producto de Bsale, para el campo «Tipo de producto» de Shopify. */
+  tipoProducto: string | null;
   /** Precio con IGV. */
   precio: number;
   /**
@@ -1135,6 +1137,7 @@ export class ShopifyClient {
         // Se omite si no hay marca, en vez de mandar cadena vacía: un proveedor
         // en blanco ensucia los filtros de la tienda igual que uno inventado.
         ...(p.marca ? { vendor: p.marca } : {}),
+        ...(p.tipoProducto ? { productType: p.tipoProducto } : {}),
         // Un producto sin variantes explícitas necesita igualmente una opción.
         // «Title / Default Title» es la convención de Shopify para eso.
         productOptions: [{ name: 'Title', position: 1, values: [{ name: 'Default Title' }] }],

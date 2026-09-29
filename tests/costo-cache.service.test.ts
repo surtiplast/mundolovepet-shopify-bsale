@@ -14,6 +14,7 @@ function producto(over: Partial<ProductoGuardado> = {}): ProductoGuardado {
     sku: 'A1',
     barcode: null,
     brand: null,
+    category: null,
     bsaleVariantId: 100,
     bsaleProductId: null,
     name: 'Producto',

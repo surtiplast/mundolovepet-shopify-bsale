@@ -115,6 +115,7 @@ async function main(): Promise<void> {
       sku: i.sku,
       barcode: i.barcode,
       brand: i.marca,
+      category: i.tipoProducto,
       bsaleVariantId: i.bsaleVariantId,
       bsaleProductId: i.bsaleProductId,
       name: i.nombre,

@@ -25,6 +25,8 @@ export interface CandidatoCreacion {
   barcode: string | null;
   /** La marca. Va al campo «Proveedor» de Shopify; `null` si Bsale no la tiene. */
   marca: string | null;
+  /** El tipo de producto. Va al campo «Tipo de producto» de Shopify. */
+  tipoProducto: string | null;
   titulo: string;
   precio: number;
   stock: number | null;
@@ -159,6 +161,7 @@ export function planificarCreacion(
       sku: p.sku,
       barcode: p.barcode?.trim() || null,
       marca: p.brand?.trim() || null,
+      tipoProducto: p.category?.trim() || null,
       titulo,
       precio: p.bsalePrice,
       bsaleVariantId: p.bsaleVariantId,
@@ -253,6 +256,7 @@ export async function crearProductos(
       sku: c.sku,
       barcode: c.barcode,
       marca: c.marca,
+      tipoProducto: c.tipoProducto,
       precio: c.precio,
       costo: c.costo,
       stock: c.stock,

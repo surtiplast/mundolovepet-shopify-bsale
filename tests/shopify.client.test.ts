@@ -177,6 +177,7 @@ describe('ShopifyClient · crearProductoBorrador (idempotencia)', () => {
     sku: 'SKU-1',
     barcode: null,
     marca: null,
+    tipoProducto: null,
     precio: 10,
     costo: null,
     stock: 5,
@@ -213,6 +214,34 @@ describe('ShopifyClient · crearProductoBorrador (idempotencia)', () => {
     const r = await client.crearProductoBorrador(producto);
     expect(r).toEqual({ ok: true, productId: 'gid://shopify/Product/1', errores: [] });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('manda productType cuando hay tipo de producto', async () => {
+    const fetchMock = vi.fn(async () =>
+      gqlResponse({
+        data: { productSet: { product: { id: 'gid://shopify/Product/1' }, userErrors: [] } },
+      }),
+    );
+    const client = makeClient(fetchMock as unknown as typeof fetch, 3);
+
+    await client.crearProductoBorrador({ ...producto, tipoProducto: 'SNACK' });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]![1]!.body));
+    expect(body.variables.input.productType).toBe('SNACK');
+  });
+
+  it('omite productType en vez de mandar cadena vacía cuando no hay tipo', async () => {
+    const fetchMock = vi.fn(async () =>
+      gqlResponse({
+        data: { productSet: { product: { id: 'gid://shopify/Product/1' }, userErrors: [] } },
+      }),
+    );
+    const client = makeClient(fetchMock as unknown as typeof fetch, 3);
+
+    await client.crearProductoBorrador(producto);
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]![1]!.body));
+    expect(body.variables.input).not.toHaveProperty('productType');
   });
 });
 

@@ -106,6 +106,7 @@ function candidato(over: Partial<CandidatoCreacion> = {}): CandidatoCreacion {
     sku: 'NUEVO1',
     barcode: null,
     marca: null,
+    tipoProducto: null,
     titulo: 'Producto nuevo',
     precio: 25,
     stock: 10,

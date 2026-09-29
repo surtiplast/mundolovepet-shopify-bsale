@@ -117,23 +117,25 @@ export interface BsaleVariant {
     id?: number;
     name?: string | null;
     /**
-     * La marca. **No está documentada.**
+     * La marca. **Comprobado que no sirve en esta cuenta.**
      *
-     * La interfaz de Bsale muestra una marca por producto, pero la referencia
-     * de `/v1/products.json` no la incluye entre sus campos. Se leen aquí las
-     * tres formas en que podría venir, por si la API devuelve más de lo que
-     * documenta —cosa habitual—:
-     *
-     *   · `brand` como texto suelto
-     *   · `brand.name` si viene expandida
-     *   · `brandName`, que es como la nombra la respuesta de crear packs
-     *
-     * Si no llega ninguna, el producto se crea sin marca y ya está. El panel
-     * enseña cuántas se han leído, así que con una lectura del catálogo se ve
-     * si esto sirve o si hay que buscar la marca por otro camino.
+     * La interfaz de Bsale muestra una marca por producto, pero `/v1/products.json`
+     * sólo devuelve `{href, id}` — nunca el nombre, ni con
+     * `expand=[product.brand]`. Se probó también `/v1/brands.json` y
+     * `/v1/brands/{id}.json` directo: los dos responden «recurso no
+     * disponible» para esta cuenta. No es un campo que falte leer aquí; Bsale
+     * no lo expone. Se dejan las tres formas en que podría venir —por si algún
+     * día la API cambia— pero hoy ninguna produce nada, y el contador
+     * `conMarca` del panel es la prueba.
      */
     brand?: string | { name?: string | null } | null;
     brandName?: string | null;
+    /**
+     * El tipo de producto («SNACK», «ALIMENTO», …). Llega con
+     * `expand=[product,product.product_type]` — a diferencia de la marca, éste
+     * sí trae el nombre cuando se pide expandido así.
+     */
+    product_type?: { id?: number; name?: string | null } | null;
   } | null;
 }
 
@@ -433,7 +435,15 @@ export class BsaleClient {
   listarVariantes(maxItems?: number): AsyncGenerator<BsaleVariant, void, undefined> {
     // expand=[product] evita una petición extra por variante para conocer su
     // producto: con miles de variantes, esa diferencia es de minutos.
-    return this.paginar<BsaleVariant>('/variants.json', { expand: '[product]' }, maxItems);
+    //
+    // `product.product_type` expandido de más: sin el punto, Bsale sólo
+    // devuelve `{href, id}` del tipo de producto, igual que hace con la marca.
+    // Con él, trae también `name` — verificado contra la API real.
+    return this.paginar<BsaleVariant>(
+      '/variants.json',
+      { expand: '[product,product.product_type]' },
+      maxItems,
+    );
   }
 
   /** Precios de una lista concreta. Bsale no expone «el precio» sin lista. */

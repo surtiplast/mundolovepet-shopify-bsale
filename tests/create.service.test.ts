@@ -18,11 +18,14 @@ function prod(over: Partial<ProductoGuardado> = {}): ProductoGuardado {
     sku: 'A-1',
     barcode: '8595602559152',
     brand: 'BRIT CARE',
+    category: 'ALIMENTO',
     bsaleVariantId: 1,
     bsaleProductId: 9,
     name: 'Producto de prueba',
     bsalePrice: 25.5,
     bsaleStock: 4,
+    bsaleCosto: null,
+    costoRevisadoEl: null,
     ...over,
   };
 }
@@ -125,6 +128,7 @@ describe('crearProductos', () => {
       sku: 'A-9',
       barcode: '8595602559152',
       marca: 'BRIT CARE',
+      tipoProducto: 'ALIMENTO',
       precio: 19.9,
       // `null` porque nadie ha llamado a `anadirCostos`: planificar no toca Bsale.
       costo: null,

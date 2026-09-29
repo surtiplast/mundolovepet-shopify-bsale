@@ -19,6 +19,9 @@ export interface ProductoGuardado {
   barcode: string | null;
   /** La marca de Bsale. Va al campo «Proveedor» de Shopify. */
   brand: string | null;
+  /** El tipo de producto de Bsale («SNACK», «ALIMENTO», …). Va al campo
+   * «Tipo de producto» de Shopify. Columna `category`, ya existía sin usar. */
+  category: string | null;
   bsaleVariantId: number | null;
   bsaleProductId: number | null;
   name: string | null;
@@ -98,6 +101,7 @@ interface ProductMapRow {
   sku: string;
   barcode: string | null;
   brand: string | null;
+  category: string | null;
   bsaleVariantId: number | null;
   bsaleProductId: number | null;
   name: string | null;
@@ -136,6 +140,7 @@ export class PrismaCatalogStore implements CatalogStore {
       const datos = {
         barcode: item.barcode,
         brand: item.brand,
+        category: item.category,
         bsaleVariantId: item.bsaleVariantId,
         bsaleProductId: item.bsaleProductId,
         name: item.name,
@@ -160,6 +165,7 @@ export class PrismaCatalogStore implements CatalogStore {
       sku: f.sku,
       barcode: f.barcode,
       brand: f.brand,
+      category: f.category,
       bsaleVariantId: f.bsaleVariantId,
       bsaleProductId: f.bsaleProductId,
       name: f.name,

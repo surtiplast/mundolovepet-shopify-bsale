@@ -164,7 +164,7 @@ describe('leerCatalogo', () => {
 
       const urls = fetchMock.mock.calls.map((c) => String(c[0]));
       const variantesUrl = urls.find((u) => u.includes('/variants.json'));
-      expect(decodeURIComponent(variantesUrl ?? '')).toContain('expand=[product]');
+      expect(decodeURIComponent(variantesUrl ?? '')).toContain('expand=[product,product.product_type]');
     });
   });
 
@@ -312,5 +312,62 @@ describe('leerCatalogo', () => {
     const { items } = await leerCatalogo(client, { priceListId: 4, officeId: 1, maxItems: 60 });
 
     expect(items).toHaveLength(60);
+  });
+
+  /**
+   * A diferencia de la marca (comprobado que Bsale no la expone para esta
+   * cuenta — ver el comentario en `BsaleVariant.product.brand`), el tipo de
+   * producto sí trae el nombre, pero sólo si se pide expandido con el punto:
+   * `product.product_type`. Sin eso, Bsale sólo devuelve `{href, id}`.
+   */
+  describe('tipo de producto', () => {
+    it('pide product.product_type expandido, o sólo llegaría el id', async () => {
+      const fetchMock = fakeFetch({ '/variants.json': [variante(1, 'A-1')] });
+      const client = makeClient(fetchMock as unknown as typeof fetch);
+
+      await leerCatalogo(client, { priceListId: 4, officeId: 1 });
+
+      const urls = fetchMock.mock.calls.map((c) => String(c[0]));
+      const variantesUrl = urls.find((u) => u.includes('/variants.json'));
+      expect(decodeURIComponent(variantesUrl ?? '')).toContain('product.product_type');
+    });
+
+    it('lo lee de product.product_type.name', async () => {
+      const fetchMock = fakeFetch({
+        '/variants.json': [
+          {
+            href: '',
+            id: 1,
+            code: 'A-1',
+            description: '',
+            product: { id: 901, name: 'Producto', product_type: { id: 3, name: 'SNACK' } },
+          },
+        ],
+      });
+      const client = makeClient(fetchMock as unknown as typeof fetch);
+
+      const { items } = await leerCatalogo(client, { priceListId: 4, officeId: 1 });
+
+      expect(items[0]!.tipoProducto).toBe('SNACK');
+    });
+
+    it('sin product_type expandido (sólo href+id, sin name), no inventa nada', async () => {
+      const fetchMock = fakeFetch({
+        '/variants.json': [
+          {
+            href: '',
+            id: 1,
+            code: 'A-1',
+            description: '',
+            product: { id: 901, name: 'Producto', product_type: { id: 3 } },
+          },
+        ],
+      });
+      const client = makeClient(fetchMock as unknown as typeof fetch);
+
+      const { items } = await leerCatalogo(client, { priceListId: 4, officeId: 1 });
+
+      expect(items[0]!.tipoProducto).toBeNull();
+    });
   });
 });
