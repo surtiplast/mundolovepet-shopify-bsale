@@ -1879,23 +1879,53 @@ const enElAdminDeShopify = () => {
   if (params.has('host') || params.get('embedded') === '1') return true;
   // Un marco de otro origen hace que leer `window.top` lance. Que lance es
   // justamente la prueba de que estamos dentro de uno.
-  try { return window.top !== window.self; } catch { return true; }
+  try { if (window.top !== window.self) return true; } catch { return true; }
+  // Último recurso: si App Bridge ya dejó definido `shopify.idToken`, es que
+  // Shopify inyectó este documento, con marco o sin él — algunas rutas de
+  // navegación (un enlace del propio menú nativo de Shopify, no un botón
+  // nuestro) pueden recargar el documento sin `host` en la URL y sin marco
+  // detectable, y ahí es donde las dos comprobaciones de arriba fallan solas.
+  return typeof shopify !== 'undefined' && typeof shopify.idToken === 'function';
 };
 
-if (enElAdminDeShopify()) {
-  $('tabs').hidden = true;
-  $('marca').hidden = true;
-} else {
-  // Fuera de Shopify, `ui-title-bar` y `ui-nav-menu` no son nada que el
-  // navegador reconozca: sin App Bridge para reubicar su contenido en la
-  // cabecera y el menú reales, se quedan sueltos en la página tal cual,
-  // sin estilo — el botón «Fase 6» y los enlaces de las pestañas repetidos
-  // justo encima de las pestañas de verdad. Dentro de Shopify se dejan
-  // intactas: App Bridge las necesita visibles para relocalizar su
-  // contenido a la cabecera y el menú nativos.
-  document.querySelector('ui-title-bar')?.setAttribute('hidden', '');
-  document.querySelector('ui-nav-menu')?.setAttribute('hidden', '');
+/**
+ * Se aplica al cargar Y se reintenta poco después.
+ *
+ * ── Por qué reintentar ───────────────────────────────────────────────────────
+ *
+ * Esto llegó a producción: `enElAdminDeShopify()` dio negativo en una carga
+ * que sí estaba dentro de Shopify —seguramente porque corrió antes de que
+ * App Bridge terminara de definir `shopify.idToken`, la comprobación que la
+ * hacía fiable—, y el resultado fue el menú lateral nuestro (`.tabs`) y la
+ * tarjeta con el nombre de la app (`.marca`) duplicando exactamente lo que
+ * Shopify ya dibuja en su propia barra lateral: dos «Mundo Love Pet · Shopify
+ * × Bsale», uno encima del otro.
+ *
+ * Reintentar una vez más, ya con tiempo de sobra para que App Bridge esté
+ * listo, corrige ese falso negativo. El coste es, como mucho, un parpadeo
+ * breve la primera vez que carga — mejor eso que un menú duplicado para
+ * siempre.
+ */
+function actualizarVisibilidadEmbebido() {
+  if (enElAdminDeShopify()) {
+    $('tabs').hidden = true;
+    $('marca').hidden = true;
+    document.querySelector('ui-title-bar')?.removeAttribute('hidden');
+    document.querySelector('ui-nav-menu')?.removeAttribute('hidden');
+  } else {
+    // Fuera de Shopify, `ui-title-bar` y `ui-nav-menu` no son nada que el
+    // navegador reconozca: sin App Bridge para reubicar su contenido en la
+    // cabecera y el menú reales, se quedan sueltos en la página tal cual,
+    // sin estilo — el botón «Fase 6» y los enlaces de las pestañas repetidos
+    // justo encima de las pestañas de verdad.
+    document.querySelector('ui-title-bar')?.setAttribute('hidden', '');
+    document.querySelector('ui-nav-menu')?.setAttribute('hidden', '');
+    $('tabs').hidden = false;
+    $('marca').hidden = false;
+  }
 }
+actualizarVisibilidadEmbebido();
+setTimeout(actualizarVisibilidadEmbebido, 600);
 
 for (const tab of document.querySelectorAll('.tab')) {
   tab.onclick = () => {
