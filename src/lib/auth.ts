@@ -114,8 +114,14 @@ export const CABECERA_AUTENTICACION = 'Basic realm="Mundo Love Pet - Bsale", cha
  *
  * Son varias rutas porque el menú lateral de Shopify navega con enlaces de
  * verdad y cada pestaña tiene la suya. Todas devuelven la misma página.
+ *
+ * Se exporta para que `server.ts` registre exactamente estas mismas rutas y
+ * ninguna otra: antes había dos listas iguales mantenidas a mano en dos
+ * archivos distintos, y añadir una pestaña nueva a una sin acordarse de la
+ * otra dejaba esa página pidiendo usuario y contraseña dentro de Shopify —
+ * pasó de verdad con «Cambios». Con una sola lista, eso ya no puede pasar.
  */
-const RUTAS_DEL_PANEL = new Set([
+export const RUTAS_DEL_PANEL = [
   '/',
   '/index.html',
   '/conexion',
@@ -123,10 +129,13 @@ const RUTAS_DEL_PANEL = new Set([
   '/sincronizar',
   '/productos',
   '/comprobantes',
-]);
+  '/cambios',
+];
+
+const RUTAS_DEL_PANEL_SET = new Set(RUTAS_DEL_PANEL);
 
 function esPaginaDelPanel(path: string): boolean {
-  return RUTAS_DEL_PANEL.has(path);
+  return RUTAS_DEL_PANEL_SET.has(path);
 }
 
 /**

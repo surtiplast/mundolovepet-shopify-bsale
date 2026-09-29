@@ -6,7 +6,7 @@
  * que el camino feliz funciona.
  */
 import { describe, expect, it, vi } from 'vitest';
-import { requiereClave, leerCredenciales, CABECERA_AUTENTICACION } from '../src/lib/auth.js';
+import { requiereClave, leerCredenciales, CABECERA_AUTENTICACION, RUTAS_DEL_PANEL } from '../src/lib/auth.js';
 
 const USUARIO = 'rolando';
 const CLAVE = 'una-clave-larga-de-verdad';
@@ -15,8 +15,12 @@ function basic(usuario: string, clave: string): string {
   return 'Basic ' + Buffer.from(`${usuario}:${clave}`, 'utf8').toString('base64');
 }
 
-function contexto(authorization?: string, path = '/api/pedidos') {
-  const req = { headers: { authorization }, path, ip: '1.2.3.4' };
+function contexto(
+  authorization?: string,
+  path = '/api/pedidos',
+  query: Record<string, string> = {},
+) {
+  const req = { headers: { authorization }, path, query, ip: '1.2.3.4' };
   const res = {
     status: vi.fn().mockReturnThis(),
     set: vi.fn().mockReturnThis(),
@@ -139,5 +143,66 @@ describe('requiereClave', () => {
     const cuerpo = JSON.stringify(res.json.mock.calls);
     expect(cuerpo).not.toContain(CLAVE);
     expect(cuerpo).not.toContain('intento-fallido');
+  });
+});
+
+/**
+ * Esto llegó a producción: se agregó la pestaña «Cambios» al panel y al menú
+ * de Shopify, pero `RUTAS_DEL_PANEL` vivía duplicada —una copia en este
+ * archivo, otra en `server.ts`— y sólo se actualizó una. La copia que
+ * `esPaginaDelPanel` usa se quedó sin «/cambios», así que Shopify cargaba esa
+ * página como si no fuera del panel: sin `Authorization`, sin bypass, y el
+ * navegador acababa pidiendo usuario y contraseña dentro del propio admin de
+ * Shopify.
+ *
+ * Ahora sólo hay una lista (exportada desde aquí, que `server.ts` importa),
+ * así que ya no hay una segunda copia que alguien pueda olvidar actualizar.
+ * Estas pruebas cubren que el bypass funcione para cada ruta de esa lista —
+ * literalmente, no iterando el array, para que si el día de mañana alguien
+ * quita «/cambios» de la lista sin querer, esta prueba lo note igual.
+ */
+describe('requiereClave — carga embebida dentro de Shopify', () => {
+  const middlewareEmbebido = requiereClave({
+    usuario: USUARIO,
+    clave: CLAVE,
+    shopify: { clientId: 'client-id', clientSecret: 'client-secret', tienda: 'mundo-love-pet.myshopify.com' },
+  });
+  const HOST_SHOP = { host: 'YWRtaW4uc2hvcGlmeS5jb20=', shop: 'mundo-love-pet.myshopify.com' };
+
+  it('cada ruta declarada en RUTAS_DEL_PANEL pasa sin credenciales cuando Shopify manda host y shop', () => {
+    for (const ruta of RUTAS_DEL_PANEL) {
+      const { req, res, next } = contexto(undefined, ruta, HOST_SHOP);
+      middlewareEmbebido(req as never, res as never, next);
+      expect(next, `esperaba pasar en ${ruta}`).toHaveBeenCalled();
+      expect(res.status, `no debía rechazar ${ruta}`).not.toHaveBeenCalled();
+    }
+  });
+
+  it('/cambios pasa sin credenciales: la regresión concreta que llegó a producción', () => {
+    const { req, res, next } = contexto(undefined, '/cambios', HOST_SHOP);
+    middlewareEmbebido(req as never, res as never, next);
+
+    expect(next).toHaveBeenCalled();
+    expect(res.status).not.toHaveBeenCalled();
+  });
+
+  it('sin host o sin shop, ni siquiera una ruta del panel pasa gratis', () => {
+    const { req: soloHost, res: resHost, next: nextHost } = contexto(undefined, '/cambios', { host: HOST_SHOP.host });
+    middlewareEmbebido(soloHost as never, resHost as never, nextHost);
+    expect(nextHost).not.toHaveBeenCalled();
+    expect(resHost.status).toHaveBeenCalledWith(401);
+
+    const { req: soloShop, res: resShop, next: nextShop } = contexto(undefined, '/cambios', { shop: HOST_SHOP.shop });
+    middlewareEmbebido(soloShop as never, resShop as never, nextShop);
+    expect(nextShop).not.toHaveBeenCalled();
+    expect(resShop.status).toHaveBeenCalledWith(401);
+  });
+
+  it('host y shop NO abren un boquete en la API: sólo bypasan páginas del panel', () => {
+    const { req, res, next } = contexto(undefined, '/api/pedidos', HOST_SHOP);
+    middlewareEmbebido(req as never, res as never, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(401);
   });
 });

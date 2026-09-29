@@ -29,7 +29,7 @@ import { syncRouter } from './routes/sync.js';
 import { invoicesRouter } from './routes/invoices.js';
 import { webhooksRouter } from './routes/webhooks.js';
 import { logsRouter } from './routes/logs.js';
-import { requiereClave } from './lib/auth.js';
+import { requiereClave, RUTAS_DEL_PANEL } from './lib/auth.js';
 import { readFile } from 'node:fs/promises';
 import {
   InMemoryCatalogStore,
@@ -273,17 +273,10 @@ export async function createApp(
   // No es enrutado de verdad: es una sola página que se pinta distinto. Pero
   // tener direcciones propias hace que el botón «atrás» funcione y que un
   // enlace a «Comprobantes» abra ahí.
-  const RUTAS_DEL_PANEL = [
-    '/',
-    '/index.html',
-    '/conexion',
-    '/catalogo',
-    '/sincronizar',
-    '/productos',
-    '/comprobantes',
-    '/cambios',
-  ];
-
+  //
+  // La lista vive en auth.ts, no aquí: ese mismo archivo la usa para saber
+  // qué rutas puede servir sin pedir contraseña dentro de Shopify. Una sola
+  // lista evita que una pestaña nueva quede registrada aquí y olvidada allá.
   for (const ruta of RUTAS_DEL_PANEL) app.get(ruta, servirPanel);
 
   // El resto de estáticos, si algún día los hay.
