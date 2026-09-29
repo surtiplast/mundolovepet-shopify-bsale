@@ -222,6 +222,25 @@
   .cat-check{display:flex;gap:7px;align-items:center;font-size:12.5px;color:var(--muted);cursor:pointer}
   .cat-conteo{font-size:12.5px;color:var(--muted);margin-left:auto}
 
+  /* Interruptor visual (ON/OFF), para reemplazar el botón de texto
+     «Activar»/«Desactivar» de la sincronización automática. */
+  .interruptores{display:flex;flex-direction:column;gap:12px;margin:0 0 20px}
+  .switch-fila{display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none}
+  .switch-fila:has(input:disabled){cursor:default}
+  .switch{position:relative;display:inline-flex;flex:0 0 auto;width:38px;height:22px}
+  .switch input{position:absolute;opacity:0;width:100%;height:100%;margin:0;cursor:pointer}
+  .switch input:disabled{cursor:default}
+  .switch-riel{position:absolute;inset:0;background:var(--line);border-radius:999px;
+            transition:background-color .15s ease}
+  .switch-riel::before{content:'';position:absolute;left:2px;top:2px;width:18px;height:18px;
+            background:#fff;border-radius:50%;box-shadow:0 1px 2px rgba(0,0,0,.25);
+            transition:transform .15s ease}
+  .switch input:checked + .switch-riel{background:var(--ok)}
+  .switch input:checked + .switch-riel::before{transform:translateX(16px)}
+  .switch input:disabled + .switch-riel{opacity:.5}
+  .switch input:focus-visible + .switch-riel{outline:2px solid var(--brand);outline-offset:2px}
+  .switch-texto{font-size:13px;color:var(--txt)}
+
   /* `70vh` en vez de 460px fijos: en un monitor grande se veían doce filas de
      tres mil y sobraba media pantalla en blanco debajo. */
   .cat-tabla-scroll{border:1px solid var(--line);border-radius:11px;overflow:auto;
@@ -341,11 +360,15 @@
       <button id="btnSimPrecio">Simular precios</button>
       <button id="btnAplicarPrecio" class="peligro">Actualizar precios en Shopify</button>
     </div>
-    <div class="actions" style="margin:0 0 20px">
-      <span id="stockAutoChip" class="cat-chip">Stock automático: cargando…</span>
-      <button id="btnToggleStockAuto" disabled>Cambiar</button>
-      <span id="precioAutoChip" class="cat-chip">Precios automáticos: cargando…</span>
-      <button id="btnTogglePrecioAuto" disabled>Cambiar</button>
+    <div class="interruptores">
+      <label class="switch-fila">
+        <span class="switch"><input type="checkbox" id="stockAutoSwitch" disabled><span class="switch-riel"></span></span>
+        <span id="stockAutoTexto" class="switch-texto">Stock automático: cargando…</span>
+      </label>
+      <label class="switch-fila">
+        <span class="switch"><input type="checkbox" id="precioAutoSwitch" disabled><span class="switch-riel"></span></span>
+        <span id="precioAutoTexto" class="switch-texto">Precios automáticos: cargando…</span>
+      </label>
     </div>
   </div>
 
@@ -366,11 +389,15 @@
       <button id="btnDuplicados">Buscar SKU duplicados</button>
       <button id="btnBorrarDuplicados" class="peligro">Eliminar duplicados seguros</button>
     </div>
-    <div class="actions" style="margin:0 0 20px">
-      <span id="costoAutoChip" class="cat-chip">Costo automático: cargando…</span>
-      <button id="btnToggleCostoAuto" disabled>Cambiar</button>
-      <span id="crearAutoChip" class="cat-chip">Alta automática: cargando…</span>
-      <button id="btnToggleCrearAuto" disabled>Cambiar</button>
+    <div class="interruptores">
+      <label class="switch-fila">
+        <span class="switch"><input type="checkbox" id="costoAutoSwitch" disabled><span class="switch-riel"></span></span>
+        <span id="costoAutoTexto" class="switch-texto">Costo automático: cargando…</span>
+      </label>
+      <label class="switch-fila">
+        <span class="switch"><input type="checkbox" id="crearAutoSwitch" disabled><span class="switch-riel"></span></span>
+        <span id="crearAutoTexto" class="switch-texto">Alta automática: cargando…</span>
+      </label>
     </div>
   </div>
 
@@ -1061,18 +1088,17 @@ $('btnSimPrecio').onclick = (e) => sincronizar('PRECIO', false, e.target);
    Un solo par de funciones genéricas para los dos, en vez de duplicar la
    misma lógica: sólo cambia la clave del JSON, el texto y los ids del DOM. */
 const INTERRUPTORES = {
-  stock: { campo: 'syncAutoStock', chip: 'stockAutoChip', boton: 'btnToggleStockAuto', etiqueta: 'Stock automático' },
-  precio: { campo: 'syncAutoPrecios', chip: 'precioAutoChip', boton: 'btnTogglePrecioAuto', etiqueta: 'Precios automáticos' },
-  costo: { campo: 'repararAutoCosto', chip: 'costoAutoChip', boton: 'btnToggleCostoAuto', etiqueta: 'Costo automático' },
-  crear: { campo: 'crearAutoProductos', chip: 'crearAutoChip', boton: 'btnToggleCrearAuto', etiqueta: 'Alta automática de productos' },
+  stock: { campo: 'syncAutoStock', switch: 'stockAutoSwitch', texto: 'stockAutoTexto', etiqueta: 'Stock automático' },
+  precio: { campo: 'syncAutoPrecios', switch: 'precioAutoSwitch', texto: 'precioAutoTexto', etiqueta: 'Precios automáticos' },
+  costo: { campo: 'repararAutoCosto', switch: 'costoAutoSwitch', texto: 'costoAutoTexto', etiqueta: 'Costo automático' },
+  crear: { campo: 'crearAutoProductos', switch: 'crearAutoSwitch', texto: 'crearAutoTexto', etiqueta: 'Alta automática de productos' },
 };
 
 function pintarInterruptor(clave, activo) {
-  const { chip, boton, etiqueta } = INTERRUPTORES[clave];
-  $(chip).textContent = `${etiqueta}: ${activo ? 'Activados' : 'Desactivados'}`;
-  $(chip).className = 'cat-chip';
-  $(boton).textContent = activo ? 'Desactivar' : 'Activar';
-  $(boton).disabled = false;
+  const { switch: idSwitch, texto, etiqueta } = INTERRUPTORES[clave];
+  $(idSwitch).checked = activo;
+  $(idSwitch).disabled = false;
+  $(texto).textContent = `${etiqueta}: ${activo ? 'Activado' : 'Desactivado'}`;
 }
 
 async function cargarConfigSync() {
@@ -1085,20 +1111,20 @@ async function cargarConfigSync() {
       pintarInterruptor('costo', data.repararAutoCosto);
       pintarInterruptor('crear', data.crearAutoProductos);
     } else {
-      for (const c of Object.values(INTERRUPTORES)) $(c.chip).textContent = `${c.etiqueta}: no se pudo leer`;
+      for (const c of Object.values(INTERRUPTORES)) $(c.texto).textContent = `${c.etiqueta}: no se pudo leer`;
     }
   } catch {
-    for (const c of Object.values(INTERRUPTORES)) $(c.chip).textContent = `${c.etiqueta}: no se pudo leer`;
+    for (const c of Object.values(INTERRUPTORES)) $(c.texto).textContent = `${c.etiqueta}: no se pudo leer`;
   }
 }
 
 function alternarInterruptor(clave) {
-  const { campo, boton: idBoton, etiqueta } = INTERRUPTORES[clave];
-  $(idBoton).onclick = async (e) => {
-    const boton = e.target;
-    const activarA = boton.textContent === 'Activar';
-    boton.disabled = true;
-    boton.textContent = 'Guardando…';
+  const { campo, switch: idSwitch, texto, etiqueta } = INTERRUPTORES[clave];
+  $(idSwitch).onchange = async (e) => {
+    const input = e.target;
+    const activarA = input.checked;
+    input.disabled = true;
+    $(texto).textContent = `${etiqueta}: guardando…`;
     try {
       const res = await pedir('/api/sync/config', {
         method: 'POST',
@@ -1108,8 +1134,9 @@ function alternarInterruptor(clave) {
       const data = await res.json();
       if (!res.ok) {
         banner('err', data.error?.message || 'No se pudo cambiar la configuración.');
-        boton.disabled = false;
-        boton.textContent = activarA ? 'Activar' : 'Desactivar';
+        input.checked = !activarA;
+        input.disabled = false;
+        $(texto).textContent = `${etiqueta}: ${!activarA ? 'Activado' : 'Desactivado'}`;
         return;
       }
       pintarInterruptor(clave, data[campo]);
@@ -1118,8 +1145,9 @@ function alternarInterruptor(clave) {
         : `${etiqueta} DESACTIVADOS: sólo cambiarán cuando los apliques a mano.`);
     } catch {
       banner('err', 'Error de red al cambiar la configuración.');
-      boton.disabled = false;
-      boton.textContent = activarA ? 'Activar' : 'Desactivar';
+      input.checked = !activarA;
+      input.disabled = false;
+      $(texto).textContent = `${etiqueta}: ${!activarA ? 'Activado' : 'Desactivado'}`;
     }
   };
 }
