@@ -26,6 +26,7 @@ import type { PedidoShopify } from '../integrations/shopify/client.js';
 import type { InvoiceStore } from '../db/invoice.store.js';
 import { IntegrationError } from '../lib/errors.js';
 import { logger } from '../lib/logger.js';
+import { leerPdfGuardado, guardarPdf } from '../lib/pdf-storage.js';
 
 /** El IGV peruano. Se deja como constante nombrada, no como 0.18 suelto. */
 const TASA_IGV = 0.18;
@@ -495,17 +496,33 @@ export function invoicesRouter(
    */
   router.get('/comprobantes/:pedido/pdf', async (req: Request, res: Response) => {
     try {
-      const url = await emisiones.urlPdfDe(req.params.pedido!);
-      if (!url) {
+      const documento = await emisiones.documentoPdfDe(req.params.pedido!);
+      if (!documento) {
         return res.status(404).json({ error: { message: 'Ese pedido no tiene comprobante.' } });
       }
 
-      const respuesta = await fetch(url);
-      if (!respuesta.ok || !respuesta.body) {
-        throw new IntegrationError(`Bsale devolvió ${respuesta.status} al pedir el PDF.`, {
-          provider: 'BSALE',
-          retryable: true,
-        });
+      // Primero el disco: si ya se pidió antes, evita depender de Bsale de
+      // nuevo y de que su URL —que expira— siga viva.
+      let buffer = await leerPdfGuardado(documento.bsaleDocumentId);
+      if (!buffer) {
+        const respuesta = await fetch(documento.urlPdf);
+        if (!respuesta.ok || !respuesta.body) {
+          throw new IntegrationError(`Bsale devolvió ${respuesta.status} al pedir el PDF.`, {
+            provider: 'BSALE',
+            retryable: true,
+          });
+        }
+        buffer = Buffer.from(await respuesta.arrayBuffer());
+        // Best-effort: si falla guardar la copia, igual se sirve la que se
+        // acaba de descargar. La próxima vista simplemente vuelve a pedirla.
+        try {
+          await guardarPdf(documento.bsaleDocumentId, buffer);
+        } catch (err) {
+          logger.error(
+            { pedido: req.params.pedido, err: (err as Error).message },
+            'No se pudo guardar la copia local del PDF',
+          );
+        }
       }
 
       res.setHeader('Content-Type', 'application/pdf');
@@ -516,7 +533,6 @@ export function invoicesRouter(
         `inline; filename="comprobante-${req.params.pedido}.pdf"`,
       );
 
-      const buffer = Buffer.from(await respuesta.arrayBuffer());
       res.send(buffer);
     } catch (error) {
       responderError(res, error, 'No se pudo obtener el PDF del comprobante.');

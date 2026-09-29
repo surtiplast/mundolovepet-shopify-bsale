@@ -101,12 +101,14 @@ export interface InvoiceStore {
   /** Los pedidos ya facturados, indexados por su id de Shopify. */
   listarFacturados(): Promise<Map<string, ResumenEmision>>;
   /**
-   * La URL del PDF de un pedido. **Sólo para uso interno del servidor.**
+   * La URL del PDF de un pedido y el id del documento en Bsale. **Sólo para uso
+   * interno del servidor.**
    *
-   * Nunca debe viajar al navegador: lleva un token en la dirección y quien la
-   * tenga puede abrir la factura sin más comprobación.
+   * La URL nunca debe viajar al navegador: lleva un token en la dirección y
+   * quien la tenga puede abrir la factura sin más comprobación. El
+   * `bsaleDocumentId` sirve de clave para cachear el PDF en disco.
    */
-  urlPdfDe(shopifyOrderId: string): Promise<string | null>;
+  documentoPdfDe(shopifyOrderId: string): Promise<{ bsaleDocumentId: number; urlPdf: string } | null>;
   /** El comprobante original de un pedido, o `null` si nunca se emitió. */
   obtenerEmision(shopifyOrderId: string): Promise<EmisionOriginal | null>;
   /**
@@ -161,8 +163,11 @@ export class InMemoryInvoiceStore implements InvoiceStore {
     return new Map(this.filas);
   }
 
-  async urlPdfDe(shopifyOrderId: string): Promise<string | null> {
-    return this.urls.get(shopifyOrderId) ?? null;
+  async documentoPdfDe(shopifyOrderId: string): Promise<{ bsaleDocumentId: number; urlPdf: string } | null> {
+    const urlPdf = this.urls.get(shopifyOrderId);
+    const original = this.originales.get(shopifyOrderId);
+    if (!urlPdf || !original) return null;
+    return { bsaleDocumentId: original.bsaleDocumentId, urlPdf };
   }
 
   async obtenerEmision(shopifyOrderId: string): Promise<EmisionOriginal | null> {
@@ -276,12 +281,14 @@ export class PrismaInvoiceStore implements InvoiceStore {
     return mapa;
   }
 
-  async urlPdfDe(shopifyOrderId: string): Promise<string | null> {
+  async documentoPdfDe(shopifyOrderId: string): Promise<{ bsaleDocumentId: number; urlPdf: string } | null> {
     const filas = await this.prisma.orderSync.findMany({
       where: { shopifyOrderId: BigInt(shopifyOrderId) },
       include: { document: true },
     });
-    return filas[0]?.document?.bsaleUrlPdf ?? null;
+    const doc = filas[0]?.document;
+    if (!doc?.bsaleUrlPdf) return null;
+    return { bsaleDocumentId: doc.bsaleDocumentId, urlPdf: doc.bsaleUrlPdf };
   }
 
   async obtenerEmision(shopifyOrderId: string): Promise<EmisionOriginal | null> {
