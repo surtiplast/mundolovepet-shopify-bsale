@@ -52,6 +52,8 @@ import {
   leerInterruptor,
   CLAVE_SYNC_AUTO_PRECIOS,
   CLAVE_SYNC_AUTO_STOCK,
+  CLAVE_REPARAR_AUTO_COSTO,
+  CLAVE_CREAR_AUTO_PRODUCTOS,
   type SettingsStore,
 } from '../db/settings.store.js';
 
@@ -121,7 +123,8 @@ export function syncRouter(
   const router = Router();
 
   /**
-   * Los interruptores de stock y precios automáticos.
+   * Los interruptores de stock, precios, costo y alta de productos
+   * automáticos.
    *
    * GET los lee para pintar los botones con el estado real. POST cambia el
    * que se le pida: se guardan en base de datos, no en el `.env`, para que
@@ -131,26 +134,38 @@ export function syncRouter(
    *
    * El de stock por defecto es `true`: hasta que existió este botón, el cron
    * siempre lo aplicaba. El de precios por defecto es `env.SYNC_AUTO_PRECIOS`,
-   * que hasta ahora era la única forma de activarlo.
+   * que hasta ahora era la única forma de activarlo. Costo y alta de
+   * productos son los más recientes y por defecto quedan **desactivados**:
+   * arrancar con alta automática de productos, sin que nadie lo haya pedido a
+   * conciencia, es justo el susto que evita que `crearProductos` siga
+   * dejándolos en borrador.
    */
   router.get('/sync/config', async (_req: Request, res: Response) => {
     try {
-      const [syncAutoStock, syncAutoPrecios] = await Promise.all([
+      const [syncAutoStock, syncAutoPrecios, repararAutoCosto, crearAutoProductos] = await Promise.all([
         leerInterruptor(settings, CLAVE_SYNC_AUTO_STOCK, true),
         leerInterruptor(settings, CLAVE_SYNC_AUTO_PRECIOS, env.SYNC_AUTO_PRECIOS),
+        leerInterruptor(settings, CLAVE_REPARAR_AUTO_COSTO, false),
+        leerInterruptor(settings, CLAVE_CREAR_AUTO_PRODUCTOS, false),
       ]);
-      res.json({ ok: true, syncAutoStock, syncAutoPrecios });
+      res.json({ ok: true, syncAutoStock, syncAutoPrecios, repararAutoCosto, crearAutoProductos });
     } catch (error) {
       responderError(res, error, 'No se pudo leer la configuración.');
     }
   });
 
   router.post('/sync/config', async (req: Request, res: Response) => {
-    const { syncAutoStock, syncAutoPrecios } = req.body ?? {};
-    if (typeof syncAutoStock !== 'boolean' && typeof syncAutoPrecios !== 'boolean') {
+    const { syncAutoStock, syncAutoPrecios, repararAutoCosto, crearAutoProductos } = req.body ?? {};
+    if (
+      typeof syncAutoStock !== 'boolean' &&
+      typeof syncAutoPrecios !== 'boolean' &&
+      typeof repararAutoCosto !== 'boolean' &&
+      typeof crearAutoProductos !== 'boolean'
+    ) {
       return res.status(400).json({
         error: {
-          message: 'Falta "syncAutoStock" o "syncAutoPrecios" (booleano) en el cuerpo de la petición.',
+          message:
+            'Falta "syncAutoStock", "syncAutoPrecios", "repararAutoCosto" o "crearAutoProductos" (booleano) en el cuerpo de la petición.',
         },
       });
     }
@@ -163,11 +178,27 @@ export function syncRouter(
         await settings.guardar(CLAVE_SYNC_AUTO_PRECIOS, String(syncAutoPrecios));
         logger.info({ syncAutoPrecios }, 'Sincronización automática de precios reconfigurada');
       }
+      if (typeof repararAutoCosto === 'boolean') {
+        await settings.guardar(CLAVE_REPARAR_AUTO_COSTO, String(repararAutoCosto));
+        logger.info({ repararAutoCosto }, 'Reparación automática de costo reconfigurada');
+      }
+      if (typeof crearAutoProductos === 'boolean') {
+        await settings.guardar(CLAVE_CREAR_AUTO_PRODUCTOS, String(crearAutoProductos));
+        logger.info({ crearAutoProductos }, 'Alta automática de productos reconfigurada');
+      }
       const actual = await Promise.all([
         leerInterruptor(settings, CLAVE_SYNC_AUTO_STOCK, true),
         leerInterruptor(settings, CLAVE_SYNC_AUTO_PRECIOS, env.SYNC_AUTO_PRECIOS),
+        leerInterruptor(settings, CLAVE_REPARAR_AUTO_COSTO, false),
+        leerInterruptor(settings, CLAVE_CREAR_AUTO_PRODUCTOS, false),
       ]);
-      res.json({ ok: true, syncAutoStock: actual[0], syncAutoPrecios: actual[1] });
+      res.json({
+        ok: true,
+        syncAutoStock: actual[0],
+        syncAutoPrecios: actual[1],
+        repararAutoCosto: actual[2],
+        crearAutoProductos: actual[3],
+      });
     } catch (error) {
       responderError(res, error, 'No se pudo guardar la configuración.');
     }

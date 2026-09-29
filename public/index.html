@@ -359,6 +359,12 @@
       <button id="btnDuplicados">Buscar SKU duplicados</button>
       <button id="btnBorrarDuplicados" class="peligro">Eliminar duplicados seguros</button>
     </div>
+    <div class="actions" style="margin:0 0 20px">
+      <span id="costoAutoChip" class="cat-chip">Costo automático: cargando…</span>
+      <button id="btnToggleCostoAuto" disabled>Cambiar</button>
+      <span id="crearAutoChip" class="cat-chip">Alta automática: cargando…</span>
+      <button id="btnToggleCrearAuto" disabled>Cambiar</button>
+    </div>
   </div>
 
   <div class="panel-tab" data-panel="comprobantes" hidden>
@@ -995,6 +1001,8 @@ $('btnSimPrecio').onclick = (e) => sincronizar('PRECIO', false, e.target);
 const INTERRUPTORES = {
   stock: { campo: 'syncAutoStock', chip: 'stockAutoChip', boton: 'btnToggleStockAuto', etiqueta: 'Stock automático' },
   precio: { campo: 'syncAutoPrecios', chip: 'precioAutoChip', boton: 'btnTogglePrecioAuto', etiqueta: 'Precios automáticos' },
+  costo: { campo: 'repararAutoCosto', chip: 'costoAutoChip', boton: 'btnToggleCostoAuto', etiqueta: 'Costo automático' },
+  crear: { campo: 'crearAutoProductos', chip: 'crearAutoChip', boton: 'btnToggleCrearAuto', etiqueta: 'Alta automática de productos' },
 };
 
 function pintarInterruptor(clave, activo) {
@@ -1012,6 +1020,8 @@ async function cargarConfigSync() {
     if (res.ok) {
       pintarInterruptor('stock', data.syncAutoStock);
       pintarInterruptor('precio', data.syncAutoPrecios);
+      pintarInterruptor('costo', data.repararAutoCosto);
+      pintarInterruptor('crear', data.crearAutoProductos);
     } else {
       for (const c of Object.values(INTERRUPTORES)) $(c.chip).textContent = `${c.etiqueta}: no se pudo leer`;
     }
@@ -1054,6 +1064,8 @@ function alternarInterruptor(clave) {
 
 alternarInterruptor('stock');
 alternarInterruptor('precio');
+alternarInterruptor('costo');
+alternarInterruptor('crear');
 
 /* Aplicar pide confirmación con el número real de cambios: se simula primero
    y se pregunta con ese dato delante, no con un «¿seguro?» genérico. */

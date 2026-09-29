@@ -28,8 +28,11 @@
  * mucho más delicado: un error en Bsale se propaga a la tienda sin que nadie lo
  * mire. Por eso hay que activarlo a conciencia con `SYNC_AUTO_PRECIOS=1`.
  *
- * **Productos nuevos, nunca.** Crear productos automáticamente llenaría la
- * tienda de fichas a medias. Eso sigue siendo una decisión humana.
+ * **Costo y productos nuevos, sólo si se pide.** Igual que los precios: por
+ * defecto quedan desactivados y se activan desde el mismo botón del panel que
+ * stock y precios. El costo sólo rellena lo que en Shopify falta o es cero
+ * (nunca pisa uno puesto a mano — ver `repair.service.ts`), y los productos se
+ * crean **en borrador**, nunca publicados — ver `create.service.ts`.
  *
  * **Comprobantes, nunca.** Emitir declara ante SUNAT.
  */
@@ -43,12 +46,16 @@ import {
   leerInterruptor,
   CLAVE_SYNC_AUTO_PRECIOS,
   CLAVE_SYNC_AUTO_STOCK,
+  CLAVE_REPARAR_AUTO_COSTO,
+  CLAVE_CREAR_AUTO_PRODUCTOS,
   type PrismaSettingsLike,
 } from '../db/settings.store.js';
 import { ConnectionService } from '../services/connection.service.js';
-import { leerCatalogo, type ItemCatalogo } from '../services/catalog.service.js';
+import { leerCatalogo, normalizarSku, type ItemCatalogo } from '../services/catalog.service.js';
 import { compararCatalogos } from '../services/matching.service.js';
 import { planificar, aplicarStock, aplicarPrecios } from '../services/sync.service.js';
+import { planificarReparacion, anadirCostosReparacion, aplicarReparacion } from '../services/repair.service.js';
+import { planificarCreacion, anadirCostos, crearProductos } from '../services/create.service.js';
 import type { ShopifyVariant } from '../integrations/shopify/client.js';
 
 async function main(): Promise<void> {
@@ -87,6 +94,8 @@ async function main(): Promise<void> {
     CLAVE_SYNC_AUTO_PRECIOS,
     env.SYNC_AUTO_PRECIOS,
   );
+  const repararAutoCosto = await leerInterruptor(settings, CLAVE_REPARAR_AUTO_COSTO, false);
+  const crearAutoProductos = await leerInterruptor(settings, CLAVE_CREAR_AUTO_PRODUCTOS, false);
 
   // ── 1. Leer Bsale ──────────────────────────────────────────────────────────
   const { items } = await service.usarBsale(env.BSALE_API_BASE_URL, (client) =>
@@ -200,6 +209,73 @@ async function main(): Promise<void> {
     }
   } else {
     resumen.precios = { motivo: 'desactivado' };
+  }
+
+  // El costo: sólo rellena lo que en Shopify falta o es cero (ver
+  // repair.service.ts), así que activarlo no puede pisar un costo puesto a
+  // mano. No se toca el código de barras aquí: ese sigue siendo un botón
+  // aparte porque casi no quedan productos con esa huella del fallo antiguo.
+  if (repararAutoCosto) {
+    const planReparacion = planificarReparacion(guardados, variantes, undefined, {
+      barcode: false,
+      costo: true,
+    });
+    if (planReparacion.reparaciones.length > 0) {
+      const costos = await service.usarBsale(env.BSALE_API_BASE_URL, (bsale) =>
+        anadirCostosReparacion(planReparacion, (variantId) => bsale.obtenerCosto(variantId)),
+      );
+      await service.usarShopify(
+        env.SHOPIFY_SHOP_DOMAIN,
+        env.SHOPIFY_API_VERSION,
+        env.SHOPIFY_CLIENT_ID,
+        async (client) => {
+          const r = await aplicarReparacion(client, planReparacion);
+          resumen.costo = { ...r, ...costos };
+        },
+      );
+    } else {
+      resumen.costo = { reparados: 0, fallidos: 0, motivo: 'sin cambios' };
+    }
+  } else {
+    resumen.costo = { motivo: 'desactivado' };
+  }
+
+  // Productos nuevos: siempre en borrador (crearProductos nunca publica), y
+  // con la misma doble comprobación contra duplicados que usa el botón manual
+  // — ver planificarCreacion.
+  if (crearAutoProductos) {
+    const codigosEnShopify = new Set<string>();
+    for (const v of variantes) {
+      const sku = normalizarSku(v.sku);
+      const barcode = normalizarSku(v.barcode);
+      if (sku) codigosEnShopify.add(sku);
+      if (barcode) codigosEnShopify.add(barcode);
+    }
+
+    const planCreacion = planificarCreacion(guardados, informe.soloEnBsale, undefined, codigosEnShopify);
+    if (planCreacion.candidatos.length > 0) {
+      if (!locationId) {
+        throw new Error(
+          'Hay productos nuevos por crear pero no se encontró ninguna sucursal activa en Shopify.',
+        );
+      }
+      const costos = await service.usarBsale(env.BSALE_API_BASE_URL, (bsale) =>
+        anadirCostos(planCreacion, (variantId) => bsale.obtenerCosto(variantId)),
+      );
+      await service.usarShopify(
+        env.SHOPIFY_SHOP_DOMAIN,
+        env.SHOPIFY_API_VERSION,
+        env.SHOPIFY_CLIENT_ID,
+        async (client) => {
+          const r = await crearProductos(client, planCreacion, locationId!);
+          resumen.productosNuevos = { ...r, ...costos };
+        },
+      );
+    } else {
+      resumen.productosNuevos = { creados: 0, fallidos: 0, motivo: 'sin candidatos' };
+    }
+  } else {
+    resumen.productosNuevos = { motivo: 'desactivado' };
   }
 
   logger.info({ ...resumen, segundos: Math.round((Date.now() - inicio) / 1000) },

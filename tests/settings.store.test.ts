@@ -12,6 +12,8 @@ import {
   leerInterruptor,
   CLAVE_SYNC_AUTO_PRECIOS,
   CLAVE_SYNC_AUTO_STOCK,
+  CLAVE_REPARAR_AUTO_COSTO,
+  CLAVE_CREAR_AUTO_PRODUCTOS,
   type PrismaSettingsLike,
 } from '../src/db/settings.store.js';
 
@@ -46,6 +48,20 @@ describe('leerInterruptor', () => {
     await store.guardar(CLAVE_SYNC_AUTO_STOCK, 'false');
     expect(await leerInterruptor(store, CLAVE_SYNC_AUTO_STOCK, true)).toBe(false);
     expect(await leerInterruptor(store, CLAVE_SYNC_AUTO_PRECIOS, false)).toBe(true);
+  });
+
+  it('costo y alta de productos empiezan desactivados, a diferencia del stock', async () => {
+    const store = new InMemorySettingsStore();
+    expect(await leerInterruptor(store, CLAVE_REPARAR_AUTO_COSTO, false)).toBe(false);
+    expect(await leerInterruptor(store, CLAVE_CREAR_AUTO_PRODUCTOS, false)).toBe(false);
+  });
+
+  it('activar costo automático no activa de paso la alta de productos', async () => {
+    const store = new InMemorySettingsStore();
+    await store.guardar(CLAVE_REPARAR_AUTO_COSTO, 'true');
+
+    expect(await leerInterruptor(store, CLAVE_REPARAR_AUTO_COSTO, false)).toBe(true);
+    expect(await leerInterruptor(store, CLAVE_CREAR_AUTO_PRODUCTOS, false)).toBe(false);
   });
 });
 

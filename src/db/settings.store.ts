@@ -64,6 +64,11 @@ export class PrismaSettingsStore implements SettingsStore {
 /** Claves de los interruptores. */
 export const CLAVE_SYNC_AUTO_PRECIOS = 'sync_auto_precios';
 export const CLAVE_SYNC_AUTO_STOCK = 'sync_auto_stock';
+/** Sólo el costo (`anadirCostosReparacion`), nunca el código de barras: ese
+ * pide a Bsale variante por variante y el cron ya paga ese precio por el alta
+ * de productos nuevos si ese interruptor también está activo. */
+export const CLAVE_REPARAR_AUTO_COSTO = 'reparar_auto_costo';
+export const CLAVE_CREAR_AUTO_PRODUCTOS = 'crear_auto_productos';
 
 /**
  * Lee un interruptor booleano con su valor por defecto.
