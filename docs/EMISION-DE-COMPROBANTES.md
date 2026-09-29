@@ -126,10 +126,19 @@ Automatizarlo después no obliga a rehacer nada: el mismo servicio se llamaría
 desde un webhook. Sí requiere activar la cola y el worker en Render (unos 21 USD
 al mes), hoy comentados en `render.yaml`.
 
-## El stock no se descuenta al emitir
+## El stock SÍ se descuenta al emitir
 
-`dispatch: 0`. El stock ya se sincroniza desde Bsale hacia Shopify; si además el
-comprobante descontara stock en Bsale, la misma venta se restaría dos veces.
+`dispatch: 1`. Una venta web no le avisa a Bsale por ningún otro camino: no
+hay webhook de pedidos de Shopify, y el stock sólo viaja de Bsale hacia
+Shopify, nunca al revés — así que nada más descuenta el stock en Bsale por
+una venta de la tienda. Sin `dispatch: 1`, el siguiente ciclo de
+sincronización volvía a poner en Shopify el stock viejo de Bsale, deshaciendo
+la baja que la propia venta ya había hecho ahí: sobreventa silenciosa.
+
+Esto corrige el stock de Bsale en el momento en que se **emite** el
+comprobante de ese pedido, no en el instante exacto de la compra —la emisión
+sigue siendo manual (ver arriba). Automatizar la emisión adelantaría también
+este ajuste de stock.
 
 ## Antes de poder emitir
 

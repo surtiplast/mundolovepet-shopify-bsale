@@ -392,6 +392,25 @@ describe('el correo al cliente', () => {
   });
 });
 
+/**
+ * Una venta web no le avisa a Bsale por ningún otro camino: no hay webhook de
+ * pedidos de Shopify, y el stock sólo viaja de Bsale hacia Shopify, nunca al
+ * revés. `dispatch` en el documento es la única baja real que recibe Bsale —
+ * sin ella, el próximo ciclo de sincronización deshace la baja que la propia
+ * venta ya había hecho en Shopify.
+ */
+describe('el descuento de stock al emitir', () => {
+  it('con descontarStock activado, pide a Bsale que despache y baje el stock', () => {
+    const plan = planificarComprobante(pedido(), { ...CONFIG, descontarStock: true });
+    expect(plan.documento?.dispatch).toBe(1);
+  });
+
+  it('con descontarStock desactivado, no lo pide', () => {
+    const plan = planificarComprobante(pedido(), { ...CONFIG, descontarStock: false });
+    expect(plan.documento?.dispatch).toBe(0);
+  });
+});
+
 describe('planificarNotaCredito', () => {
   const CONFIG_NOTA: ConfigNotaCredito = {
     officeId: 1,

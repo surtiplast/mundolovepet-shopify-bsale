@@ -80,9 +80,13 @@ function configuracion(env: Env): ConfigComprobante {
     doctypeFacturaId: env.BSALE_DOCTYPE_FACTURA_ID!,
     taxIdIgv: env.BSALE_TAX_ID_IGV!,
     tasaIgv: TASA_IGV,
-    // El stock ya se sincroniza desde Bsale hacia Shopify. Si además el
-    // comprobante descontara stock, la misma venta se restaría dos veces.
-    descontarStock: false,
+    // Una venta web nunca le avisa a Bsale por ningún otro camino: no hay
+    // webhook de pedidos de Shopify, y el stock sólo viaja de Bsale hacia
+    // Shopify, nunca al revés. Sin esto, el próximo ciclo de sincronización
+    // volvía a poner en Shopify el stock viejo de Bsale, deshaciendo la baja
+    // que la propia venta ya había hecho — sobreventa silenciosa. `dispatch`
+    // es la única baja real que recibe Bsale, así que no duplica nada.
+    descontarStock: true,
     // Bsale envía el comprobante al cliente. Se puede apagar con
     // `BSALE_ENVIAR_CORREO=0` si algún día su cuenta empieza a mandarlo por su
     // cuenta y los clientes lo recibieran dos veces.
