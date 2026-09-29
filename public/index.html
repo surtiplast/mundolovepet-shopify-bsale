@@ -292,6 +292,7 @@
     <a href="/sincronizar">Sincronizar</a>
     <a href="/productos">Productos nuevos</a>
     <a href="/comprobantes">Comprobantes</a>
+    <a href="/cambios">Cambios</a>
   </ui-nav-menu>
 
   <!-- ── Pestañas ─────────────────────────────────────────────────────────────
@@ -1895,7 +1896,16 @@ for (const tab of document.querySelectorAll('.tab')) {
     const destino = Object.keys(RUTAS).find((r) => RUTAS[r] === tab.dataset.tab && r !== '/');
     // Se cambia la dirección sin recargar: así el botón «atrás» funciona y la
     // pestaña sobrevive a un refresco del marco.
-    if (destino) history.pushState({}, '', destino);
+    //
+    // `location.search` va SIEMPRE pegado al destino: ahí viajan `host` y
+    // `shop`, que es cómo el servidor sabe que esto es una carga embebida de
+    // Shopify y sirve el panel sin pedir usuario/contraseña (ver
+    // `esCargaEmbebida` en auth.ts). Perderlos aquí no rompía nada al
+    // cambiar de pestaña —era sólo un cambio de URL, sin petición nueva—,
+    // pero Shopify puede recrear el iframe más tarde usando esta misma
+    // dirección ya sin esos parámetros, y entonces el navegador sí vuelve a
+    // pedir la contraseña.
+    if (destino) history.pushState({}, '', destino + location.search);
     mostrarPestana(tab.dataset.tab);
   };
 }
