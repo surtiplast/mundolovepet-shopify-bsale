@@ -15,10 +15,14 @@ import { logger } from '../lib/logger.js';
 /**
  * Las pruebas de conexión salen a APIs externas. Sin límite, alguien podría
  * usarlas para golpear la cuota de Shopify o Bsale desde el panel.
+ *
+ * El límite subió de 10 a 20: el panel ahora prueba solo al abrirse (para
+ * enseñar el estado real en vez de «Sin verificar»), así que cada apertura ya
+ * gasta una llamada antes de que nadie pulse nada a mano.
  */
 const testLimiter = rateLimit({
   windowMs: 60_000,
-  limit: 10,
+  limit: 20,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   message: { error: 'Demasiadas pruebas de conexión. Espera un minuto.' },

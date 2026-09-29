@@ -616,22 +616,38 @@ async function testOne(provider) {
   refresh();
 }
 
-$('btnAll').onclick = async (e) => {
-  e.target.disabled = true;
+/**
+ * Prueba ambas conexiones de verdad, contra Bsale y Shopify, no sólo lee el
+ * último estado guardado.
+ *
+ * `silencioso` se usa al cargar el panel: probar solo, sin el aviso verde
+ * ni el JSON crudo, porque abrir la app no es un gesto que el comerciante
+ * interprete como «quiero ver el detalle» — sólo quiere ver los puntos en
+ * verde. Un fallo real sí se avisa siempre: eso no es ruido, es justo lo
+ * que hay que saber al abrir el panel.
+ */
+async function probarConexiones(silencioso = false) {
   ['BSALE', 'SHOPIFY'].forEach(setBusy);
   try {
     const res = await pedir('/api/connections/test-all', { method: 'POST' });
     const data = await res.json();
-    show(data);
+    if (!silencioso) show(data);
     const fallos = (data.results || []).filter((r) => !r.ok).map((r) => r.provider);
-    banner(data.ok ? 'ok' : 'err',
-      data.ok ? 'Ambas conexiones responden correctamente. Fase 1 verificada.'
-              : `Falló: ${fallos.join(', ')}. Revisa el detalle abajo.`);
+    if (!data.ok) {
+      banner('err', `Falló: ${fallos.join(', ')}. Revisa el detalle abajo.`);
+    } else if (!silencioso) {
+      banner('ok', 'Ambas conexiones responden correctamente. Fase 1 verificada.');
+    }
   } catch {
-    banner('err', 'Error de red al probar las conexiones.');
+    if (!silencioso) banner('err', 'Error de red al probar las conexiones.');
   }
-  e.target.disabled = false;
   refresh();
+}
+
+$('btnAll').onclick = async (e) => {
+  e.target.disabled = true;
+  await probarConexiones(false);
+  e.target.disabled = false;
 };
 
 $('btnDiscover').onclick = async (e) => {
@@ -1733,7 +1749,12 @@ window.addEventListener('popstate', () => mostrarPestana(pestanaDeLaRuta()));
 
 mostrarPestana(pestanaDeLaRuta());
 
+// Al abrir el panel se prueba de verdad, no sólo se enseña el último estado
+// guardado: sin esto, los puntos se quedaban en naranja «Sin verificar»
+// hasta que alguien pulsaba el botón a mano, aunque las dos conexiones
+// llevaran funcionando bien todo el día.
 refresh();
+probarConexiones(true);
 cargarConfigSync();
 </script>
 </body>
