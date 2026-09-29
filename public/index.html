@@ -155,13 +155,16 @@
          box-shadow:0 1px 0 0 rgb(0 0 0 / 5%)}
   button:hover:not(:disabled){background:var(--panel-2);border-color:#c9c9c9}
   button:disabled{opacity:.5;cursor:not-allowed}
-  /* Los botones «seguros» (Simular, Comparar, Descubrir…) se quedan grises en
-     reposo — no todos pueden ser el verde principal de la sección, se
-     perdería la jerarquía. Pero mientras están deshabilitados por estar
-     trabajando («Simulando…», «Calculando…») si se ponen en teal: la
-     confirmación de que el clic funcionó no debe depender de leer el texto
-     a tiempo. `.primary`/`.peligro` ya tienen su propio color y se dejan
-     igual, sólo atenuados. */
+  /* Los botones que simulan (Simular stock, Simular precios…) llevan
+     `.primary`, así que sí escriben en negro en reposo — no distinguirlos del
+     resto de los «seguros» (Comparar, Descubrir…) dejaba «Simular» con el
+     mismo gris que cualquier otro botón de sólo lectura, cuando en realidad
+     es el primer paso obligado antes de cada acción roja de la sección.
+
+     Mientras un botón cualquiera está deshabilitado por estar trabajando
+     («Simulando…», «Calculando…») se pone en teal: la confirmación de que el
+     clic funcionó no debe depender de leer el texto a tiempo. `.primary`/
+     `.peligro` ya tienen su propio color y se dejan igual, sólo atenuados. */
   button:not(.primary):not(.peligro):disabled{
     opacity:1;color:var(--brand);border-color:var(--brand);
     background:color-mix(in srgb,var(--brand) 16%,var(--panel-2));
@@ -357,7 +360,7 @@
     <div class="actions" style="margin:0 0 20px">
       <button class="primary" id="btnSimStock">Simular stock</button>
       <button id="btnAplicarStock" class="peligro">Actualizar stock en Shopify</button>
-      <button id="btnSimPrecio">Simular precios</button>
+      <button class="primary" id="btnSimPrecio">Simular precios</button>
       <button id="btnAplicarPrecio" class="peligro">Actualizar precios en Shopify</button>
     </div>
     <div class="interruptores">
@@ -382,9 +385,9 @@
     <div class="actions" style="margin:0 0 20px">
       <button class="primary" id="btnSimCrear">Simular alta de productos</button>
       <button id="btnCrear" class="peligro">Crear productos en Shopify (borrador)</button>
-      <button id="btnSimBarcode">Simular código de barras</button>
+      <button class="primary" id="btnSimBarcode">Simular código de barras</button>
       <button id="btnRepararBarcode" class="peligro">Reparar código de barras</button>
-      <button id="btnSimCosto">Simular costo</button>
+      <button class="primary" id="btnSimCosto">Simular costo</button>
       <button id="btnRepararCosto" class="peligro">Reparar costo</button>
       <button id="btnDuplicados">Buscar SKU duplicados</button>
       <button id="btnBorrarDuplicados" class="peligro">Eliminar duplicados seguros</button>
