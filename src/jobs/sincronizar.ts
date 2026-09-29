@@ -57,6 +57,7 @@ import { planificar, aplicarStock, aplicarPrecios } from '../services/sync.servi
 import { planificarReparacion, anadirCostosReparacion, aplicarReparacion } from '../services/repair.service.js';
 import { planificarCreacion, anadirCostos, crearProductos } from '../services/create.service.js';
 import { registrosDeSync, registrosDeReparacion, registrosDeCreacion } from '../services/changelog.service.js';
+import { crearCacheDeCostos } from '../services/costo-cache.service.js';
 import { PrismaSyncLogStore, type PrismaSyncLogLike, type NuevoRegistro } from '../db/synclog.store.js';
 import type { ShopifyVariant } from '../integrations/shopify/client.js';
 
@@ -227,9 +228,15 @@ async function main(): Promise<void> {
       costo: true,
     });
     if (planReparacion.reparaciones.length > 0) {
+      // El caché evita preguntarle a Bsale otra vez por una variante que ya
+      // se consultó hace poco y no tenía costo — ver costo-cache.service.ts.
+      // Sin esto, esta pasada volvía a tardar decenas de segundos por las
+      // mismas 800+ variantes que nunca tienen costo.
+      const cacheCostos = crearCacheDeCostos(guardados);
       const costos = await service.usarBsale(env.BSALE_API_BASE_URL, (bsale) =>
-        anadirCostosReparacion(planReparacion, (variantId) => bsale.obtenerCosto(variantId)),
+        anadirCostosReparacion(planReparacion, cacheCostos.envolver((variantId) => bsale.obtenerCosto(variantId))),
       );
+      await cacheCostos.guardar(catalogo);
       await service.usarShopify(
         env.SHOPIFY_SHOP_DOMAIN,
         env.SHOPIFY_API_VERSION,
@@ -266,9 +273,11 @@ async function main(): Promise<void> {
           'Hay productos nuevos por crear pero no se encontró ninguna sucursal activa en Shopify.',
         );
       }
+      const cacheCostosCreacion = crearCacheDeCostos(guardados);
       const costos = await service.usarBsale(env.BSALE_API_BASE_URL, (bsale) =>
-        anadirCostos(planCreacion, (variantId) => bsale.obtenerCosto(variantId)),
+        anadirCostos(planCreacion, cacheCostosCreacion.envolver((variantId) => bsale.obtenerCosto(variantId))),
       );
+      await cacheCostosCreacion.guardar(catalogo);
       await service.usarShopify(
         env.SHOPIFY_SHOP_DOMAIN,
         env.SHOPIFY_API_VERSION,

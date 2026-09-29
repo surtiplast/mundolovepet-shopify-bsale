@@ -58,6 +58,7 @@ import {
 } from '../db/settings.store.js';
 import type { SyncLogStore } from '../db/synclog.store.js';
 import { registrosDeSync, registrosDeReparacion, registrosDeCreacion } from '../services/changelog.service.js';
+import { crearCacheDeCostos } from '../services/costo-cache.service.js';
 
 const syncLimiter = rateLimit({
   windowMs: 5 * 60_000,
@@ -446,10 +447,13 @@ export function syncRouter(
       await conCandado('sync/crear', async () => {
         // El costo se pide justo antes de crear, y sólo de los candidatos: Bsale
         // lo da variante por variante, así que pedirlo de todo el catálogo serían
-        // miles de peticiones para nada.
+        // miles de peticiones para nada. El caché evita repetir la pregunta por
+        // una variante que ya se consultó hace poco — ver costo-cache.service.ts.
+        const cacheCostos = crearCacheDeCostos(guardados);
         const costos = await service.usarBsale(env.BSALE_API_BASE_URL, (bsale) =>
-          anadirCostos(plan, (variantId) => bsale.obtenerCosto(variantId)),
+          anadirCostos(plan, cacheCostos.envolver((variantId) => bsale.obtenerCosto(variantId))),
         );
+        await cacheCostos.guardar(store);
 
         let resultado: ResultadoCreacion = { creados: 0, fallidos: 0, errores: [], ids: [], candidatosCreados: [] };
         await service.usarShopify(
@@ -514,11 +518,17 @@ export function syncRouter(
       // Y NO se consulta cuando sólo se pide el código de barras: es una
       // petición a Bsale por variante, y era lo que hacía que reparar sólo el
       // código de barras tardase casi un minuto para nada.
+      //
+      // El caché se guarda también al simular, no sólo al aplicar: simular
+      // ya le preguntó a Bsale de verdad, y no guardarlo desperdiciaría esa
+      // respuesta la próxima vez que alguien simule o aplique.
+      const cacheCostos = crearCacheDeCostos(guardados);
       const costos = campos.costo
         ? await service.usarBsale(env.BSALE_API_BASE_URL, (bsale) =>
-            anadirCostosReparacion(plan, (variantId) => bsale.obtenerCosto(variantId)),
+            anadirCostosReparacion(plan, cacheCostos.envolver((variantId) => bsale.obtenerCosto(variantId))),
           )
         : { conCosto: 0, sinCosto: 0 };
+      await cacheCostos.guardar(store);
 
       if (!aplicar) {
         return res.json({

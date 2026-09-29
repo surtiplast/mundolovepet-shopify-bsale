@@ -131,6 +131,14 @@ model ProductMap {
   shopifyPrice            Decimal?  @db.Decimal(12, 4)
   bsaleStock              Int?
   shopifyStock            Int?
+  /// El costo de Bsale, cacheado. Bsale no lo da en el catálogo masivo —sólo
+  /// variante por variante—, y la mayoría de las variantes no tienen: sin
+  /// este caché, cada pasada de reparar/crear volvía a preguntar por las
+  /// mismas 800+ variantes que nunca lo van a tener. `null` aquí significa
+  /// «se consultó y Bsale no tiene», no «nunca se consultó» — eso lo dice
+  /// `costoRevisadoEl`.
+  bsaleCosto              Decimal?  @db.Decimal(12, 4)
+  costoRevisadoEl         DateTime?
   status                  MapStatus @default(PENDING)
   lastError               String?
   lastSyncedAt            DateTime?
