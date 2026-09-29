@@ -1690,6 +1690,12 @@ async function cargarCambios() {
   try {
     const res = await pedir(`/api/logs?${params}`);
     const data = await res.json();
+    // La sección arranca con `hidden` puesto a mano en el HTML —es «todavía
+    // no hay nada que enseñar», no «pestaña equivocada»— y aquí es donde se
+    // quita, la primera vez que hay una respuesta real que mostrar. Sin esto
+    // la tabla se rellena por dentro pero la sección entera se queda
+    // invisible para siempre: exactamente lo que pasaba antes de este arreglo.
+    $('cambios').hidden = false;
     if (!res.ok) {
       $('cambiosCuerpo').innerHTML = `<tr><td colspan="5" class="vacio">${escapeHtml(data.error?.message || 'No se pudo leer el registro.')}</td></tr>`;
       return;
