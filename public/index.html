@@ -216,6 +216,9 @@
             border:1px solid var(--line);border-radius:9px;padding:9px 12px;font-size:13px}
   .cat-filtros select{background:var(--panel-2);color:var(--txt);border:1px solid var(--line);
             border-radius:9px;padding:9px 12px;font-size:13px;font-family:inherit}
+  .cat-fecha{display:flex;gap:7px;align-items:center;font-size:12.5px;color:var(--muted)}
+  .cat-fecha input[type=date]{background:var(--panel-2);color:var(--txt);border:1px solid var(--line);
+            border-radius:9px;padding:7px 10px;font-size:13px;font-family:inherit}
   .cat-check{display:flex;gap:7px;align-items:center;font-size:12.5px;color:var(--muted);cursor:pointer}
   .cat-conteo{font-size:12.5px;color:var(--muted);margin-left:auto}
 
@@ -449,6 +452,8 @@
     <h2 class="cat-titulo">Registro de cambios</h2>
     <div id="cambiosResumen" class="cat-resumen"></div>
     <div class="cat-filtros">
+      <label class="cat-fecha">Desde <input id="cambiosDesde" type="date"></label>
+      <label class="cat-fecha">Hasta <input id="cambiosHasta" type="date"></label>
       <select id="cambiosAccion">
         <option value="">Todas las acciones</option>
         <option value="STOCK">Stock</option>
@@ -1632,15 +1637,21 @@ const ETIQUETAS_ACCION = {
   PRODUCTO_CREADO: 'Producto creado',
 };
 
-let rangoCambios = 'hoy';
+/** `YYYY-MM-DD` en hora local, que es lo que espera un `<input type="date">`. */
+function comoFechaLocal(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const dia = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${dia}`;
+}
 
-/** `hasta` siempre es ahora. `desde` según el botón activo; `todo` no filtra. */
+/** Los botones rápidos sólo rellenan los campos de fecha; de ahí en más, los
+ * campos mandan — así se puede partir de «Este mes» y ajustar el día a mano. */
 function fechasDelRango(rango) {
-  const ahora = new Date();
-  if (rango === 'todo') return { desde: null, hasta: null };
+  const hoy = new Date();
+  if (rango === 'todo') return { desde: '', hasta: '' };
 
-  const desde = new Date(ahora);
-  desde.setHours(0, 0, 0, 0);
+  const desde = new Date(hoy);
   if (rango === 'semana') {
     // Lunes de esta semana: getDay() da 0 para domingo.
     const diaISO = (desde.getDay() + 6) % 7;
@@ -1650,21 +1661,26 @@ function fechasDelRango(rango) {
   } else if (rango === 'anio') {
     desde.setMonth(0, 1);
   }
-  return { desde, hasta: ahora };
+  return { desde: comoFechaLocal(desde), hasta: comoFechaLocal(hoy) };
 }
+
+let rangoActivo = 'hoy';
 
 function pintarBotonesRango() {
   for (const b of document.querySelectorAll('[data-rango]')) {
-    b.className = b.dataset.rango === rangoCambios ? 'primary' : '';
+    b.className = b.dataset.rango === rangoActivo ? 'primary' : '';
   }
 }
 
 async function cargarCambios() {
   pintarBotonesRango();
-  const { desde, hasta } = fechasDelRango(rangoCambios);
   const params = new URLSearchParams({ limite: '200' });
-  if (desde) params.set('desde', desde.toISOString());
-  if (hasta) params.set('hasta', hasta.toISOString());
+  const desde = $('cambiosDesde').value;
+  // «Hasta» es un día completo: sin la hora, `2026-09-29` se interpretaría
+  // como medianoche y se perdería todo lo que pasó esa fecha.
+  const hasta = $('cambiosHasta').value;
+  if (desde) params.set('desde', new Date(`${desde}T00:00:00`).toISOString());
+  if (hasta) params.set('hasta', new Date(`${hasta}T23:59:59.999`).toISOString());
   const accion = $('cambiosAccion').value;
   if (accion) params.set('accion', accion);
   const sku = $('cambiosSku').value.trim();
@@ -1701,7 +1717,18 @@ async function cargarCambios() {
 
 for (const b of document.querySelectorAll('[data-rango]')) {
   b.onclick = () => {
-    rangoCambios = b.dataset.rango;
+    rangoActivo = b.dataset.rango;
+    const { desde, hasta } = fechasDelRango(rangoActivo);
+    $('cambiosDesde').value = desde;
+    $('cambiosHasta').value = hasta;
+    cargarCambios();
+  };
+}
+// Tocar una fecha a mano deja de corresponder a ningún botón rápido: ninguno
+// se queda marcado como si siguiera siendo ese rango.
+for (const id of ['cambiosDesde', 'cambiosHasta']) {
+  $(id).onchange = () => {
+    rangoActivo = null;
     cargarCambios();
   };
 }
@@ -1885,6 +1912,11 @@ mostrarPestana(pestanaDeLaRuta());
 refresh();
 probarConexiones(true);
 cargarConfigSync();
+{
+  const { desde, hasta } = fechasDelRango(rangoActivo);
+  $('cambiosDesde').value = desde;
+  $('cambiosHasta').value = hasta;
+}
 cargarCambios();
 </script>
 </body>
