@@ -232,7 +232,7 @@ export async function createApp(
   app.get('/api/health', (_req, res) => {
     res.json({
       status: 'ok',
-      fase: 6,
+      fase: 7,
       almacen: storeKind,
       versionApiShopify: env.SHOPIFY_API_VERSION,
       hora: new Date().toISOString(),

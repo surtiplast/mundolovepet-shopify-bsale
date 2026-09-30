@@ -294,7 +294,7 @@
        título visible. Es aceptable: ahí queda el <title> de la pestaña, y ese
        camino es sólo la puerta de repuesto. -->
   <ui-title-bar title="Mundo Love Pet — Shopify × Bsale">
-    <button id="btnFase">Fase 6 · Comprobantes</button>
+    <button id="btnFase">Fase 7 · Anulación y PDF</button>
   </ui-title-bar>
 
   <!-- ── Menú en la barra lateral de Shopify ──────────────────────────────────
@@ -569,7 +569,13 @@
     <br><br>
     <strong>Lo que escribe de verdad va en rojo</strong>, y todo tiene simulación
     previa. Emitir un comprobante declara ante SUNAT y no se deshace: para
-    corregirlo hay que anularlo con otro documento.
+    corregirlo se anula con una nota de crédito, desde el mismo botón «Anular»
+    de Comprobantes — también declara y tampoco se deshace.
+    <br><br>
+    El PDF de cada comprobante se guarda en el propio servidor la primera vez
+    que se pide, así no depende de que la URL de Bsale siga viva. Y un cambio
+    real en Bsale (precio, stock) se refleja en Shopify en segundos, no en el
+    minuto del cron: Bsale avisa por webhook y la sincronización se dispara sola.
     <br><br>
     Los tokens se guardan cifrados con AES-256-GCM y nunca se muestran completos —
     sólo los últimos 4 caracteres.
