@@ -726,10 +726,10 @@ cuenta real en la Fase 1:
 | **4** | Recepción de pedidos | Webhooks Shopify verificados por HMAC. Pedidos en el panel en estado `PENDING`. Sin emitir nada aún. | 3 días |
 | **5** | Clientes en Bsale | Cliente creado o reutilizado por DNI/RUC. Cero duplicados en pruebas. | 2–3 días |
 | **6** | Boletas y facturas | Emisión real en **sandbox**. Serie y número correctos. Doble envío no genera segundo documento. | 5–6 días |
-| **7** | Comprobantes PDF | PDF descargado, almacenado en privado y servido sólo a su dueño o a un admin. | 2–3 días |
-| **8** | Dashboard y logs | Todas las pantallas de §11–15 operativas. Sincronización manual con barra de progreso. | 4–5 días |
-| **9** | Pruebas completas | Cobertura ≥ 80 % en `domain/`. Pruebas de carga, de fallo y de duplicados. | 3–4 días |
-| **10** | Producción | Despliegue, backups, monitoreo, alertas. Primera semana con supervisión manual de cada documento. | 2–3 días |
+| **7** | Comprobantes PDF | ✅ PDF descargado, almacenado en privado (volumen del contenedor) y servido sólo por el panel, nunca la URL de Bsale directa. También se agregó anulación con nota de crédito, fuera del alcance original de esta fase. | 2–3 días |
+| **8** | Dashboard y logs | ✅ Panel con las pestañas operativas (Conexión, Catálogo, Sincronizar, Productos, Comprobantes, Cambios) y registro de cambios filtrable por fecha/acción/SKU. Sincronización manual con barra de progreso real (`/api/sync/progreso`, sondeado mientras dura la operación). | 4–5 días |
+| **9** | Pruebas completas | ✅ Cobertura medida con `npm run test:coverage`: 85 % líneas / 86 % ramas / 86 % funciones en `lib/`, `config/`, `services/` e `integrations/` — supera el 80 % pedido. Pruebas de carga a escala real (~3.300 variantes, `tests/carga.test.ts`), de fallo a medio sincronizar (un lote o producto que falla no arrastra a los demás, en stock/precio/reparación/alta) y de duplicados (SKU repetido, código de barras repetido, candidato ya reservado en la misma pasada). | 3–4 días |
+| **10** | Producción | ⚠️ Desplegado y funcionando, pero sin backups automáticos de Postgres ni alertas si el cron falla — ver «Qué falta» en la sección de despliegue. | 2–3 días |
 
 **Regla operativa:** al terminar cada fase se entregan pruebas automáticas
 verdes y un resumen de qué funciona y qué no, y no se avanza hasta que lo

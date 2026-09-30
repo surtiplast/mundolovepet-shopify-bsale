@@ -59,6 +59,7 @@ import {
 import type { SyncLogStore } from '../db/synclog.store.js';
 import { registrosDeSync, registrosDeReparacion, registrosDeCreacion } from '../services/changelog.service.js';
 import { crearCacheDeCostos } from '../services/costo-cache.service.js';
+import { iniciarProgreso, terminarProgreso, leerProgreso } from '../lib/progreso.js';
 
 const syncLimiter = rateLimit({
   windowMs: 5 * 60_000,
@@ -224,6 +225,19 @@ export function syncRouter(
   });
 
   /**
+   * El progreso de la operación manual en curso, si hay alguna — Fase 8.
+   *
+   * El panel lo consulta cada pocos cientos de milisegundos mientras espera la
+   * respuesta de `/sync/apply`, `/sync/crear` o `/sync/reparar`, para pintar
+   * una barra en vez de dejar el botón girando a ciegas. `null` cuando no hay
+   * nada en curso: no es un error, es el estado normal la mayor parte del
+   * tiempo.
+   */
+  router.get('/sync/progreso', (_req: Request, res: Response) => {
+    res.json({ ok: true, progreso: leerProgreso() });
+  });
+
+  /**
    * Vuelve a leer Shopify y calcula el plan.
    *
    * Se relee en vez de reutilizar lo del emparejamiento anterior: entre una
@@ -328,30 +342,36 @@ export function syncRouter(
         }
 
         let resultado: ResultadoAplicacion = { aplicados: 0, fallidos: 0, errores: [], cambiosAplicados: [] };
-        if (tipo === 'STOCK') {
-          if (!locationId) {
-            throw new IntegrationError('No se encontró ninguna sucursal activa en Shopify.', {
-              provider: 'SHOPIFY',
-              retryable: false,
-            });
+        const nombreOperacion = tipo === 'STOCK' ? 'stock' : 'precio';
+        const avisar = iniciarProgreso(nombreOperacion, plan.cambios.length);
+        try {
+          if (tipo === 'STOCK') {
+            if (!locationId) {
+              throw new IntegrationError('No se encontró ninguna sucursal activa en Shopify.', {
+                provider: 'SHOPIFY',
+                retryable: false,
+              });
+            }
+            await service.usarShopify(
+              env.SHOPIFY_SHOP_DOMAIN,
+              env.SHOPIFY_API_VERSION,
+              env.SHOPIFY_CLIENT_ID,
+              async (client) => {
+                resultado = await aplicarStock(client, plan, locationId!, undefined, avisar);
+              },
+            );
+          } else {
+            await service.usarShopify(
+              env.SHOPIFY_SHOP_DOMAIN,
+              env.SHOPIFY_API_VERSION,
+              env.SHOPIFY_CLIENT_ID,
+              async (client) => {
+                resultado = await aplicarPrecios(client, plan, productoPorVariante, avisar);
+              },
+            );
           }
-          await service.usarShopify(
-            env.SHOPIFY_SHOP_DOMAIN,
-            env.SHOPIFY_API_VERSION,
-            env.SHOPIFY_CLIENT_ID,
-            async (client) => {
-              resultado = await aplicarStock(client, plan, locationId!);
-            },
-          );
-        } else {
-          await service.usarShopify(
-            env.SHOPIFY_SHOP_DOMAIN,
-            env.SHOPIFY_API_VERSION,
-            env.SHOPIFY_CLIENT_ID,
-            async (client) => {
-              resultado = await aplicarPrecios(client, plan, productoPorVariante);
-            },
-          );
+        } finally {
+          terminarProgreso(nombreOperacion);
         }
 
         logger.info({ tipo, ...resultado, planificados: plan.cambios.length }, 'Sincronización aplicada');
@@ -456,14 +476,19 @@ export function syncRouter(
         await cacheCostos.guardar(store);
 
         let resultado: ResultadoCreacion = { creados: 0, fallidos: 0, errores: [], ids: [], candidatosCreados: [] };
-        await service.usarShopify(
-          env.SHOPIFY_SHOP_DOMAIN,
-          env.SHOPIFY_API_VERSION,
-          env.SHOPIFY_CLIENT_ID,
-          async (client) => {
-            resultado = await crearProductos(client, plan, locationId!);
-          },
-        );
+        const avisarCreacion = iniciarProgreso('crear', plan.candidatos.length);
+        try {
+          await service.usarShopify(
+            env.SHOPIFY_SHOP_DOMAIN,
+            env.SHOPIFY_API_VERSION,
+            env.SHOPIFY_CLIENT_ID,
+            async (client) => {
+              resultado = await crearProductos(client, plan, locationId!, avisarCreacion);
+            },
+          );
+        } finally {
+          terminarProgreso('crear');
+        }
 
         logger.info(
           { ...resultado, planificados: plan.candidatos.length, ...costos },
@@ -543,14 +568,19 @@ export function syncRouter(
 
       await conCandado('sync/reparar', async () => {
         let resultado: ResultadoReparacion = { reparados: 0, fallidos: 0, errores: [], reparacionesAplicadas: [] };
-        await service.usarShopify(
-          env.SHOPIFY_SHOP_DOMAIN,
-          env.SHOPIFY_API_VERSION,
-          env.SHOPIFY_CLIENT_ID,
-          async (client) => {
-            resultado = await aplicarReparacion(client, plan);
-          },
-        );
+        const avisarReparacion = iniciarProgreso('reparar', plan.reparaciones.length);
+        try {
+          await service.usarShopify(
+            env.SHOPIFY_SHOP_DOMAIN,
+            env.SHOPIFY_API_VERSION,
+            env.SHOPIFY_CLIENT_ID,
+            async (client) => {
+              resultado = await aplicarReparacion(client, plan, avisarReparacion);
+            },
+          );
+        } finally {
+          terminarProgreso('reparar');
+        }
 
         logger.info({ campos, ...resultado, ...plan.resumen }, 'Productos reparados');
 

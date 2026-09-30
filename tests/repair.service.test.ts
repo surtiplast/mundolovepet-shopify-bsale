@@ -225,6 +225,27 @@ describe('aplicarReparacion', () => {
     expect(client.repararVariantes).toHaveBeenCalledTimes(2);
   });
 
+  it('avisa el progreso por producto procesado — Fase 8', async () => {
+    const client = clienteFalso();
+    const catalogo = [bsale({ sku: 'A' }), bsale({ sku: 'B' }), bsale({ sku: 'C' })];
+    const enTienda = [
+      shopify({ id: 'gid://v/1', sku: 'A', barcode: 'A', productId: 'gid://p/1' }),
+      shopify({ id: 'gid://v/2', sku: 'B', barcode: 'B', productId: 'gid://p/1' }),
+      shopify({ id: 'gid://v/3', sku: 'C', barcode: 'C', productId: 'gid://p/2' }),
+    ];
+    const plan = planificarReparacion(catalogo, enTienda);
+    const avisos: Array<[number, number]> = [];
+
+    await aplicarReparacion(client as never, plan, (procesados, total) => {
+      avisos.push([procesados, total]);
+    });
+
+    expect(avisos).toEqual([
+      [2, 3],
+      [3, 3],
+    ]);
+  });
+
   it('un producto que falla no interrumpe los demás', async () => {
     let n = 0;
     const client = {

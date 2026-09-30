@@ -25,6 +25,7 @@ import type {
   ResultadoEscritura,
 } from '../integrations/shopify/client.js';
 import type { Emparejado } from './matching.service.js';
+import type { CallbackProgreso } from '../lib/progreso.js';
 
 export type TipoSync = 'STOCK' | 'PRECIO';
 
@@ -162,6 +163,7 @@ export async function aplicarStock(
   plan: PlanSync,
   locationId: string,
   tamanoLote = 100,
+  onProgreso?: CallbackProgreso,
 ): Promise<ResultadoAplicacion> {
   if (plan.tipo !== 'STOCK') {
     throw new Error('aplicarStock recibió un plan que no es de stock.');
@@ -205,6 +207,12 @@ export async function aplicarStock(
         mensaje: (error as Error).message,
       });
     }
+
+    // Después de cada lote, no de cada producto: es el ritmo real al que
+    // avanza esto, y llamar a `onProgreso` por producto sería miles de
+    // llamadas para una barra que igual se repinta unas pocas veces por
+    // segundo.
+    onProgreso?.(Math.min(i + tamanoLote, plan.cambios.length), plan.cambios.length);
   }
 
   return resultado;
@@ -220,6 +228,7 @@ export async function aplicarPrecios(
   client: ShopifyClient,
   plan: PlanSync,
   productIdPorVariante: Map<string, string>,
+  onProgreso?: CallbackProgreso,
 ): Promise<ResultadoAplicacion> {
   if (plan.tipo !== 'PRECIO') {
     throw new Error('aplicarPrecios recibió un plan que no es de precios.');
@@ -240,6 +249,9 @@ export async function aplicarPrecios(
     porProducto.set(productId, lista);
   }
 
+  // Los grupos son por producto, no de tamaño fijo: el progreso se cuenta por
+  // variantes ya procesadas, no por número de llamadas hechas.
+  let procesados = 0;
   for (const [productId, cambios] of porProducto) {
     try {
       const r = await client.actualizarPrecios(
@@ -261,6 +273,9 @@ export async function aplicarPrecios(
       resultado.fallidos += cambios.length;
       resultado.errores.push({ codigo: cambios[0]!.codigo, mensaje: (error as Error).message });
     }
+
+    procesados += cambios.length;
+    onProgreso?.(procesados, plan.cambios.length);
   }
 
   return resultado;

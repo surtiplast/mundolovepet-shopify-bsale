@@ -158,9 +158,15 @@ ellas, con un mensaje que dice cuál falta:
 
 ## Qué falta
 
-- Guardar cada emisión en `OrderSync` y `BsaleDocument`. Hoy la app emite pero
-  no deja rastro en su propia base de datos: el candado que funciona es el
-  `salesId` de Bsale.
-- Descargar el PDF a almacenamiento privado (fase 7).
-- Escribir la serie y el número en un metafield del pedido de Shopify.
-- Notas de crédito para devoluciones.
+- ~~Guardar cada emisión en `OrderSync` y `BsaleDocument`.~~ Hecho —
+  `invoice.store.ts` registra pedido y documento en una sola transacción.
+- ~~Descargar el PDF a almacenamiento privado (fase 7).~~ Hecho —
+  `lib/pdf-storage.ts`, cacheado en el volumen del contenedor la primera vez
+  que se pide.
+- ~~Notas de crédito para devoluciones.~~ Hecho — botón «Anular» en
+  Comprobantes, contra `POST /returns.json`. Bsale no documenta si esto repone
+  el stock automáticamente (su respuesta trae `quantityDevStock`, sin
+  explicar cuándo se aplica); no se asumió nada sin confirmarlo.
+- Escribir la serie y el número en un metafield del pedido de Shopify. Sigue
+  pendiente: hoy hay que abrir el panel para ver qué comprobante corresponde
+  a cada pedido.

@@ -27,3 +27,7 @@ Thumbs.db
 
 # Ficheros temporales que genera vitest al arrancar
 vitest.config.ts.timestamp-*
+
+# El informe HTML de `npm run test:coverage`. Se regenera en el momento;
+# subirlo sólo ensuciaría el diff en cada corrida.
+/coverage

@@ -174,6 +174,31 @@ describe('aplicarStock', () => {
     expect(r.aplicados).toBe(250);
   });
 
+  it('avisa el progreso una vez por lote, no una vez por producto — Fase 8', async () => {
+    const client = clienteFalso();
+    const muchos = Array.from({ length: 250 }, (_, i) =>
+      emp({
+        codigo: `C${i}`,
+        shopifyInventoryItemId: `gid://inv/${i}`,
+        stockBsale: 0,
+        stockShopify: 15,
+        difiereStock: true,
+      }),
+    );
+    const plan = planificar(muchos, 'STOCK');
+    const avisos: Array<[number, number]> = [];
+
+    await aplicarStock(client as never, plan, 'gid://loc/1', 100, (procesados, total) => {
+      avisos.push([procesados, total]);
+    });
+
+    expect(avisos).toEqual([
+      [100, 250],
+      [200, 250],
+      [250, 250],
+    ]);
+  });
+
   it('manda la sucursal y la cantidad correctas', async () => {
     const client = clienteFalso();
     const plan = planificar(
@@ -254,6 +279,31 @@ describe('aplicarPrecios', () => {
 
     expect(client.actualizarPrecios).toHaveBeenCalledTimes(2);
     expect(r.aplicados).toBe(3);
+  });
+
+  it('avisa el progreso por variantes procesadas, no por llamadas hechas — Fase 8', async () => {
+    const client = { actualizarPrecios: vi.fn(async () => ({ ok: true, errores: [] })) };
+    const plan = planificar(
+      [
+        emp({ codigo: 'A', shopifyVariantId: 'v1', precioBsale: 20, precioShopify: 10, difierePrecio: true }),
+        emp({ codigo: 'B', shopifyVariantId: 'v2', precioBsale: 30, precioShopify: 10, difierePrecio: true }),
+        emp({ codigo: 'C', shopifyVariantId: 'v3', precioBsale: 40, precioShopify: 10, difierePrecio: true }),
+      ],
+      'PRECIO',
+    );
+    const mapa = new Map([['v1', 'p1'], ['v2', 'p1'], ['v3', 'p2']]);
+    const avisos: Array<[number, number]> = [];
+
+    await aplicarPrecios(client as never, plan, mapa, (procesados, total) => {
+      avisos.push([procesados, total]);
+    });
+
+    // Dos llamadas (una por producto), pero el segundo aviso ya cuenta las 3
+    // variantes: v1+v2 en el primer grupo, v3 en el segundo.
+    expect(avisos).toEqual([
+      [2, 3],
+      [3, 3],
+    ]);
   });
 
   it('manda el precio como cadena con dos decimales', async () => {

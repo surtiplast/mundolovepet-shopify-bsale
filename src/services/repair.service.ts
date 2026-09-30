@@ -31,6 +31,7 @@ import type { ShopifyClient, ShopifyVariant } from '../integrations/shopify/clie
 import type { ProductoGuardado } from '../db/catalog.store.js';
 import { normalizarSku } from './catalog.service.js';
 import { logger } from '../lib/logger.js';
+import type { CallbackProgreso } from '../lib/progreso.js';
 
 export interface Reparacion {
   sku: string;
@@ -246,6 +247,7 @@ export async function anadirCostosReparacion(
 export async function aplicarReparacion(
   client: ShopifyClient,
   plan: PlanReparacion,
+  onProgreso?: CallbackProgreso,
 ): Promise<ResultadoReparacion> {
   const resultado: ResultadoReparacion = { reparados: 0, fallidos: 0, errores: [], reparacionesAplicadas: [] };
 
@@ -256,6 +258,7 @@ export async function aplicarReparacion(
     porProducto.set(r.productId, lista);
   }
 
+  let procesados = 0;
   for (const [productId, grupo] of porProducto) {
     try {
       const r = await client.repararVariantes(
@@ -283,6 +286,9 @@ export async function aplicarReparacion(
         resultado.errores.push({ sku: g.sku, mensaje: (error as Error).message });
       }
     }
+
+    procesados += grupo.length;
+    onProgreso?.(procesados, plan.reparaciones.length);
   }
 
   return resultado;

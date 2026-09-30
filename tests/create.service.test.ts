@@ -114,6 +114,32 @@ describe('crearProductos', () => {
     expect(client.crearProductoBorrador).toHaveBeenCalledTimes(1);
   });
 
+  it('avisa el progreso por candidato creado, en orden — Fase 8', async () => {
+    const client = clienteFalso();
+    // Barcodes distintos: si comparten uno, `planificarCreacion` los trata
+    // como el mismo artículo repetido y descarta los duplicados — ver el
+    // comentario de «reservados» en create.service.ts.
+    const plan = planificarCreacion(
+      [
+        prod({ sku: 'X', barcode: '1111111111111' }),
+        prod({ sku: 'Y', barcode: '2222222222222' }),
+        prod({ sku: 'Z', barcode: '3333333333333' }),
+      ],
+      ['X', 'Y', 'Z'],
+    );
+    const avisos: Array<[number, number]> = [];
+
+    await crearProductos(client as never, plan, 'gid://loc/1', (procesados, total) => {
+      avisos.push([procesados, total]);
+    });
+
+    expect(avisos).toEqual([
+      [1, 3],
+      [2, 3],
+      [3, 3],
+    ]);
+  });
+
   it('manda título, código, precio y stock', async () => {
     const client = clienteFalso();
     const plan = planificarCreacion(

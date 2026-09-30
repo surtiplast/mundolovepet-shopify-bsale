@@ -18,6 +18,7 @@ import type { ShopifyClient, ProductoNuevo } from '../integrations/shopify/clien
 import type { ProductoGuardado } from '../db/catalog.store.js';
 import { normalizarSku } from './catalog.service.js';
 import { logger } from '../lib/logger.js';
+import type { CallbackProgreso } from '../lib/progreso.js';
 
 export interface CandidatoCreacion {
   sku: string;
@@ -247,10 +248,11 @@ export async function crearProductos(
   client: ShopifyClient,
   plan: PlanCreacion,
   locationId: string,
+  onProgreso?: CallbackProgreso,
 ): Promise<ResultadoCreacion> {
   const resultado: ResultadoCreacion = { creados: 0, fallidos: 0, errores: [], ids: [], candidatosCreados: [] };
 
-  for (const c of plan.candidatos) {
+  for (const [i, c] of plan.candidatos.entries()) {
     const producto: ProductoNuevo = {
       titulo: c.titulo,
       sku: c.sku,
@@ -277,6 +279,8 @@ export async function crearProductos(
       resultado.fallidos++;
       resultado.errores.push({ sku: c.sku, mensaje: (error as Error).message });
     }
+
+    onProgreso?.(i + 1, plan.candidatos.length);
   }
 
   return resultado;

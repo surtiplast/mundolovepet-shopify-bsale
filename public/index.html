@@ -244,6 +244,14 @@
   .switch input:focus-visible + .switch-riel{outline:2px solid var(--brand);outline-offset:2px}
   .switch-texto{font-size:13px;color:var(--txt)}
 
+  /* Barra de progreso de una sincronización manual en curso — Fase 8. */
+  .progreso{display:flex;flex-direction:column;gap:6px;margin:0 0 20px}
+  .progreso-barra{height:8px;border-radius:999px;background:var(--panel-2);
+            border:1px solid var(--line);overflow:hidden}
+  .progreso-relleno{height:100%;width:0%;background:var(--brand);border-radius:999px;
+            transition:width .25s ease}
+  .progreso-texto{font-size:12.5px;color:var(--muted)}
+
   /* `70vh` en vez de 460px fijos: en un monitor grande se veían doce filas de
      tres mil y sobraba media pantalla en blanco debajo. */
   .cat-tabla-scroll{border:1px solid var(--line);border-radius:11px;overflow:auto;
@@ -363,6 +371,10 @@
       <button class="primary" id="btnSimPrecio">Simular precios</button>
       <button id="btnAplicarPrecio" class="peligro">Actualizar precios en Shopify</button>
     </div>
+    <div class="progreso" id="progresoSincronizar" hidden>
+      <div class="progreso-barra"><div class="progreso-relleno" id="progresoSincronizarRelleno"></div></div>
+      <span class="progreso-texto" id="progresoSincronizarTexto"></span>
+    </div>
     <div class="interruptores">
       <label class="switch-fila">
         <span class="switch"><input type="checkbox" id="stockAutoSwitch" disabled><span class="switch-riel"></span></span>
@@ -391,6 +403,10 @@
       <button id="btnRepararCosto" class="peligro">Reparar costo</button>
       <button class="primary" id="btnDuplicados">Buscar SKU duplicados</button>
       <button id="btnBorrarDuplicados" class="peligro">Eliminar duplicados seguros</button>
+    </div>
+    <div class="progreso" id="progresoProductos" hidden>
+      <div class="progreso-barra"><div class="progreso-relleno" id="progresoProductosRelleno"></div></div>
+      <span class="progreso-texto" id="progresoProductosTexto"></span>
     </div>
     <div class="interruptores">
       <label class="switch-fila">
@@ -1045,10 +1061,54 @@ function pintarSync(d) {
   }).join('');
 }
 
+/**
+ * Sondea `/api/sync/progreso` mientras dura una escritura real y pinta la
+ * barra correspondiente — Fase 8. Sólo tiene sentido alrededor de aplicar,
+ * crear o reparar: simular no escribe, así que no hay nada que preguntar.
+ */
+function conBarraDeProgreso(prefijo) {
+  const contenedor = $(`progreso${prefijo}`);
+  const relleno = $(`progreso${prefijo}Relleno`);
+  const texto = $(`progreso${prefijo}Texto`);
+  let intervalo = null;
+
+  async function consultar() {
+    try {
+      const res = await pedir('/api/sync/progreso');
+      const data = await res.json();
+      if (!data.progreso) return;
+      const { procesados, total } = data.progreso;
+      const pct = total > 0 ? Math.round((procesados / total) * 100) : 0;
+      relleno.style.width = `${pct}%`;
+      texto.textContent = `${procesados} de ${total}`;
+    } catch {
+      // Un fallo al consultar el progreso no detiene nada: la operación real
+      // sigue su curso aparte, y la próxima consulta puede salir bien.
+    }
+  }
+
+  return {
+    iniciar() {
+      contenedor.hidden = false;
+      relleno.style.width = '0%';
+      texto.textContent = 'Empezando…';
+      intervalo = setInterval(consultar, 600);
+      consultar();
+    },
+    detener() {
+      if (intervalo) clearInterval(intervalo);
+      intervalo = null;
+      contenedor.hidden = true;
+    },
+  };
+}
+
 async function sincronizar(tipo, aplicar, boton) {
   boton.disabled = true;
   const original = boton.textContent;
   boton.textContent = aplicar ? 'Actualizando…' : 'Simulando…';
+  const progreso = aplicar ? conBarraDeProgreso('Sincronizar') : null;
+  progreso?.iniciar();
   try {
     const url = aplicar
       ? `/api/sync/apply?tipo=${tipo}&confirmar=si`
@@ -1081,6 +1141,7 @@ async function sincronizar(tipo, aplicar, boton) {
   } catch (err) {
     banner('err', 'Error de red durante la sincronización.');
   }
+  progreso?.detener();
   boton.disabled = false;
   boton.textContent = original;
 }
@@ -1216,6 +1277,8 @@ async function altaProductos(aplicar, boton) {
   boton.disabled = true;
   const original = boton.textContent;
   boton.textContent = aplicar ? 'Creando…' : 'Calculando…';
+  const progreso = aplicar ? conBarraDeProgreso('Productos') : null;
+  progreso?.iniciar();
   try {
     const url = aplicar ? '/api/sync/crear?confirmar=si' : '/api/sync/crear';
     const res = await pedir(url, { method: 'POST' });
@@ -1258,6 +1321,7 @@ async function altaProductos(aplicar, boton) {
   } catch (err) {
     banner('err', 'Error de red durante el alta de productos.');
   }
+  progreso?.detener();
   boton.disabled = false;
   boton.textContent = original;
 }
@@ -1328,6 +1392,8 @@ async function repararProductos(cual, aplicar, boton) {
   boton.disabled = true;
   const original = boton.textContent;
   boton.textContent = aplicar ? 'Reparando…' : 'Revisando…';
+  const progreso = aplicar ? conBarraDeProgreso('Productos') : null;
+  progreso?.iniciar();
   try {
     const url = `/api/sync/reparar?campos=${modo.campos}${aplicar ? '&confirmar=si' : ''}`;
     const res = await pedir(url, { method: 'POST' });
@@ -1376,6 +1442,7 @@ async function repararProductos(cual, aplicar, boton) {
   } catch (err) {
     banner('err', 'Error de red durante la reparación.');
   }
+  progreso?.detener();
   boton.disabled = false;
   boton.textContent = original;
 }
